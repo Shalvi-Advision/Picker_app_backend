@@ -154,6 +154,30 @@ exports.getEscalations = async (req, res) => {
   }
 };
 
+exports.getOrderItems = async (req, res) => {
+  try {
+    const { orders_idorders } = req.params;
+    const orderId = Number(orders_idorders);
+
+    const order = await Order.findOne({ orders_idorders: orderId, store_code: { $in: req.user.store_codes } });
+    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+
+    const OrderItem = require("../models/OrderItem");
+    const items = await OrderItem.find({ orders_idorders: orderId });
+    const itemStatuses = await PickerItemStatus.find({ orders_idorders: orderId });
+    const statusMap = Object.fromEntries(itemStatuses.map((s) => [s.order_item_id, s]));
+
+    const result = items.map((item) => ({
+      ...item.toObject(),
+      picker_status: statusMap[item._id.toString()] || null,
+    }));
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.triggerAssignment = async (req, res) => {
   try {
     const { orders_idorders, store_code, project_code } = req.body;

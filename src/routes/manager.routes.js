@@ -3,6 +3,7 @@ const auth = require("../middleware/auth");
 const roleGuard = require("../middleware/roleGuard");
 const {
   getAllOrders,
+  getOrderItems,
   getPickers,
   reassignOrder,
   getAllRemarks,
@@ -15,6 +16,7 @@ const {
 router.use(auth, roleGuard("store_manager"));
 
 router.get("/orders", getAllOrders);
+router.get("/orders/:orders_idorders/items", getOrderItems);
 router.get("/pickers", getPickers);
 router.post("/reassign", reassignOrder);
 router.get("/remarks", getAllRemarks);
