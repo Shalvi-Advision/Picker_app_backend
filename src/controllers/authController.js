@@ -31,14 +31,25 @@ const UI_CONFIG = {
 
 exports.login = async (req, res) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: "Email and password required" });
+    const { project_code, store_code, email, password } = req.body;
+    if (!project_code || !store_code || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Project code, branch code, username and password are required",
+      });
     }
 
     const user = await PickerUser.findOne({ email: email.toLowerCase() });
     if (!user || !user.is_active) {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
+    }
+
+    if (user.project_code !== project_code.trim()) {
+      return res.status(401).json({ success: false, message: "Invalid project code" });
+    }
+
+    if (!user.store_codes.includes(store_code.trim().toUpperCase())) {
+      return res.status(401).json({ success: false, message: "Invalid branch code" });
     }
 
     const match = await bcrypt.compare(password, user.password);
