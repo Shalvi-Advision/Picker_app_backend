@@ -101,12 +101,14 @@ exports.getAllRemarks = async (req, res) => {
 
 exports.createEscalation = async (req, res) => {
   try {
-    const { assignment_id, orders_idorders, item_status_id, remark_summary } = req.body;
+    const { assignment_id, orders_idorders, item_status_id, remark_summary, store_code, item_name } = req.body;
 
     const escalation = await PickerEscalation.create({
       assignment_id,
       orders_idorders,
-      item_status_id,
+      item_status_id: item_status_id || null,
+      store_code: store_code || null,
+      item_name: item_name || null,
       raised_by: req.user._id,
       remark_summary,
       status: "open",
@@ -140,12 +142,14 @@ exports.resolveEscalation = async (req, res) => {
 exports.getEscalations = async (req, res) => {
   try {
     const { status } = req.query;
-    const filter = { raised_by: req.user._id };
+    // Show all escalations for the manager's stores, not just ones they personally raised
+    const filter = { store_code: { $in: req.user.store_codes } };
     if (status) filter.status = status;
 
     const escalations = await PickerEscalation.find(filter)
-      .populate("assignment_id")
-      .populate("item_status_id")
+      .populate("assignment_id", "status assigned_at")
+      .populate("item_status_id", "picked_status remark")
+      .populate("raised_by", "name email")
       .sort({ createdAt: -1 });
 
     res.json({ success: true, data: escalations });
