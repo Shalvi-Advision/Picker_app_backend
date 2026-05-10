@@ -22,6 +22,7 @@ const orderItemSchema = new mongoose.Schema(
     sell_rate_with_discount: Number,
     order_date: Date,
     delivery_date: String,
+    pcode_img: { type: String, default: null },
     product_picked_status: { type: String, default: "Pending" },
     synced_at: { type: Date, default: Date.now },
   },
