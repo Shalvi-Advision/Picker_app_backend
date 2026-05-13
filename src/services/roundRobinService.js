@@ -41,17 +41,18 @@ const assignOrder = async (orders_idorders, store_code, project_code, assigned_b
 };
 
 const reassignOrder = async (orders_idorders, new_picker_id, manager_id) => {
-  const current = await PickerAssignment.findOne({
-    orders_idorders,
-    status: { $in: ["assigned", "in_progress"] },
-  });
+  // Look at most recent assignment regardless of status (rejected/assigned/in_progress)
+  const current = await PickerAssignment.findOne({ orders_idorders }).sort({ assigned_at: -1 });
 
-  if (!current) throw new Error("No active assignment found for this order");
+  if (!current) throw new Error("No prior assignment found for this order");
 
-  await PickerAssignment.updateOne(
-    { _id: current._id },
-    { status: "reassigned", reassigned_at: new Date() }
-  );
+  // If the current one is still active, mark it as reassigned so it disappears from the prior picker's list
+  if (["assigned", "in_progress"].includes(current.status)) {
+    await PickerAssignment.updateOne(
+      { _id: current._id },
+      { status: "reassigned", reassigned_at: new Date() }
+    );
+  }
 
   const assignment = await PickerAssignment.create({
     orders_idorders,
@@ -65,6 +66,9 @@ const reassignOrder = async (orders_idorders, new_picker_id, manager_id) => {
     status: "assigned",
     assigned_at: new Date(),
   });
+
+  // Push order back to "assigned" since it now has an active picker
+  await Order.updateOne({ orders_idorders }, { status: "assigned" });
 
   await sendToUser(
     new_picker_id,

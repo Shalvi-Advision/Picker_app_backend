@@ -6,20 +6,33 @@ const Order = require("../models/Order");
 exports.getMyOrders = async (req, res) => {
   try {
     const { status } = req.query;
-    const filter = { assigned_to: req.user._id };
+    // Only show non-final-rejected assignments by default; rejected ones go back to manager pool
+    const filter = {
+      assigned_to: req.user._id,
+      status: { $nin: ["reassigned"] },
+    };
     if (status) filter.status = status;
 
     const assignments = await PickerAssignment.find(filter).sort({ assigned_at: -1 });
+
+    console.log(
+      `[getMyOrders] picker=${req.user.email} id=${req.user._id} found ${assignments.length} assignment(s), filter=${JSON.stringify(filter)}`
+    );
 
     const orderIds = assignments.map((a) => a.orders_idorders);
     const orders = await Order.find({ orders_idorders: { $in: orderIds } });
     const ordersMap = Object.fromEntries(orders.map((o) => [o.orders_idorders, o]));
 
     const result = assignments.map((a) => ({
+      _id: a._id,
       assignment_id: a._id,
       orders_idorders: a.orders_idorders,
+      store_code: a.store_code,
+      project_code: a.project_code,
       status: a.status,
       assigned_at: a.assigned_at,
+      completed_at: a.completed_at,
+      rejected_reason: a.rejected_reason,
       order: ordersMap[a.orders_idorders] || null,
     }));
 
