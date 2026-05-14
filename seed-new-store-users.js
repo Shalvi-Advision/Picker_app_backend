@@ -4,7 +4,7 @@ const bcrypt = require("bcryptjs");
 const MONGO_URI =
   "mongodb://picker_app:Picker%402026%23Secure@187.127.164.170:27017/picker_db?authSource=picker_db";
 
-const NEW_STORES = ["SHD", "BLEK", "AME"];
+const NEW_STORES = ["NKR", "BHAR", "NSR"];
 
 async function run() {
   const client = new MongoClient(MONGO_URI);
