@@ -45,6 +45,8 @@ exports.getMyOrders = async (req, res) => {
 exports.getOrderItems = async (req, res) => {
   try {
     const { orders_idorders } = req.params;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 0));
 
     const assignment = await PickerAssignment.findOne({
       orders_idorders: Number(orders_idorders),
@@ -56,7 +58,15 @@ exports.getOrderItems = async (req, res) => {
       return res.status(404).json({ success: false, message: "Assignment not found" });
     }
 
-    const items = await OrderItem.find({ orders_idorders: Number(orders_idorders) });
+    const filter = { orders_idorders: Number(orders_idorders) };
+    const total = await OrderItem.countDocuments(filter);
+
+    let query = OrderItem.find(filter);
+    if (limit > 0) {
+      query = query.skip((page - 1) * limit).limit(limit);
+    }
+
+    const items = await query;
     const itemStatuses = await PickerItemStatus.find({ assignment_id: assignment._id });
     const statusMap = Object.fromEntries(itemStatuses.map((s) => [s.order_item_id, s]));
 
@@ -65,7 +75,12 @@ exports.getOrderItems = async (req, res) => {
       picker_status: statusMap[item._id] || null,
     }));
 
-    res.json({ success: true, assignment_id: assignment._id, data: result });
+    res.json({
+      success: true,
+      assignment_id: assignment._id,
+      data: result,
+      pagination: limit > 0 ? { page, limit, total, has_more: page * limit < total } : null,
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

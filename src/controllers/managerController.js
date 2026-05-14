@@ -162,12 +162,22 @@ exports.getOrderItems = async (req, res) => {
   try {
     const { orders_idorders } = req.params;
     const orderId = Number(orders_idorders);
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 0));
 
     const order = await Order.findOne({ orders_idorders: orderId, store_code: { $in: req.user.store_codes } });
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
 
     const OrderItem = require("../models/OrderItem");
-    const items = await OrderItem.find({ orders_idorders: orderId });
+    const filter = { orders_idorders: orderId };
+    const total = await OrderItem.countDocuments(filter);
+
+    let query = OrderItem.find(filter);
+    if (limit > 0) {
+      query = query.skip((page - 1) * limit).limit(limit);
+    }
+
+    const items = await query;
     const itemStatuses = await PickerItemStatus.find({ orders_idorders: orderId });
     const statusMap = Object.fromEntries(itemStatuses.map((s) => [s.order_item_id, s]));
 
@@ -176,7 +186,11 @@ exports.getOrderItems = async (req, res) => {
       picker_status: statusMap[item._id.toString()] || null,
     }));
 
-    res.json({ success: true, data: result });
+    res.json({
+      success: true,
+      data: result,
+      pagination: limit > 0 ? { page, limit, total, has_more: page * limit < total } : null,
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
