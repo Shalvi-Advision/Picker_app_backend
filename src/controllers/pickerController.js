@@ -2,6 +2,7 @@ const PickerAssignment = require("../models/PickerAssignment");
 const PickerItemStatus = require("../models/PickerItemStatus");
 const OrderItem = require("../models/OrderItem");
 const Order = require("../models/Order");
+const PickerUser = require("../models/PickerUser");
 
 exports.getMyOrders = async (req, res) => {
   try {
@@ -160,6 +161,24 @@ exports.completeOrder = async (req, res) => {
     await Order.updateOne({ orders_idorders: Number(orders_idorders) }, { status: "completed" });
 
     res.json({ success: true, message: "Order completed", data: assignment });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.setMyAvailability = async (req, res) => {
+  try {
+    const { is_active } = req.body;
+    if (typeof is_active !== "boolean") {
+      return res.status(400).json({ success: false, message: "is_active boolean required" });
+    }
+    const updated = await PickerUser.findOneAndUpdate(
+      { _id: req.user._id, role: "picker" },
+      { is_active },
+      { new: true }
+    ).select("-password");
+    if (!updated) return res.status(404).json({ success: false, message: "Picker not found" });
+    res.json({ success: true, data: updated });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

@@ -63,6 +63,30 @@ exports.getPickers = async (req, res) => {
   }
 };
 
+exports.setPickerActive = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { is_active } = req.body;
+    if (typeof is_active !== "boolean") {
+      return res.status(400).json({ success: false, message: "is_active boolean required" });
+    }
+    const picker = await PickerUser.findOne({
+      _id: id,
+      role: "picker",
+      store_codes: { $in: req.user.store_codes },
+    });
+    if (!picker) return res.status(404).json({ success: false, message: "Picker not found" });
+
+    picker.is_active = is_active;
+    await picker.save();
+    const safe = picker.toObject();
+    delete safe.password;
+    res.json({ success: true, data: safe });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.reassignOrder = async (req, res) => {
   try {
     const { orders_idorders, new_picker_id } = req.body;

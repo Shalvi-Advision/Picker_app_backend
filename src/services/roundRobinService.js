@@ -1,16 +1,36 @@
 const RoundRobinState = require("../models/RoundRobinState");
 const PickerAssignment = require("../models/PickerAssignment");
+const PickerUser = require("../models/PickerUser");
 const Order = require("../models/Order");
 const { sendToUser } = require("./notificationService");
 
 const assignOrder = async (orders_idorders, store_code, project_code, assigned_by = null) => {
-  const state = await RoundRobinState.findOne({ store_code, project_code });
-  if (!state || state.picker_queue.length === 0) {
+  // Build a fresh active-picker list each time so toggling is_active takes effect
+  // immediately without needing to rebuild a persisted queue.
+  const activePickers = await PickerUser.find({
+    role: "picker",
+    store_codes: store_code,
+    project_code,
+    is_active: true,
+  })
+    .sort({ _id: 1 })
+    .select("_id");
+
+  if (activePickers.length === 0) {
     throw new Error(`No active pickers for store ${store_code}`);
   }
 
-  const nextIndex = (state.last_assigned_picker_index + 1) % state.picker_queue.length;
-  const assignedTo = state.picker_queue[nextIndex];
+  const state =
+    (await RoundRobinState.findOne({ store_code, project_code })) ||
+    (await RoundRobinState.create({
+      store_code,
+      project_code,
+      last_assigned_picker_index: -1,
+      picker_queue: [],
+    }));
+
+  const nextIndex = (state.last_assigned_picker_index + 1) % activePickers.length;
+  const assignedTo = activePickers[nextIndex]._id;
 
   const assignment = await PickerAssignment.create({
     orders_idorders,

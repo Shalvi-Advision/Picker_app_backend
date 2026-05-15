@@ -8,6 +8,7 @@ const {
   updateItemStatus,
   completeOrder,
   rejectOrder,
+  setMyAvailability,
 } = require("../controllers/pickerController");
 
 router.use(auth, roleGuard("picker"));
@@ -18,5 +19,6 @@ router.post("/orders/:orders_idorders/start", startPicking);
 router.put("/assignments/:assignment_id/items/:order_item_id", updateItemStatus);
 router.post("/orders/:orders_idorders/complete", completeOrder);
 router.post("/orders/:orders_idorders/reject", rejectOrder);
+router.patch("/me/availability", setMyAvailability);
 
 module.exports = router;

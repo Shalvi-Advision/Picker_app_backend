@@ -71,6 +71,7 @@ exports.login = async (req, res) => {
         role: user.role,
         store_codes: user.store_codes,
         project_code: user.project_code,
+        is_active: user.is_active,
       },
       ui_config: UI_CONFIG[user.role],
     });
