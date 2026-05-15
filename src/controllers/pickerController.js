@@ -51,7 +51,7 @@ exports.getOrderItems = async (req, res) => {
     const assignment = await PickerAssignment.findOne({
       orders_idorders: Number(orders_idorders),
       assigned_to: req.user._id,
-      status: { $in: ["assigned", "in_progress"] },
+      status: { $in: ["assigned", "in_progress", "completed"] },
     });
 
     if (!assignment) {
