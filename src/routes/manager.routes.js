@@ -5,7 +5,6 @@ const {
   getAllOrders,
   getOrderItems,
   getPickers,
-  setPickerActive,
   reassignOrder,
   getAllRemarks,
   createEscalation,
@@ -21,7 +20,6 @@ router.use(auth, roleGuard("store_manager"));
 router.get("/orders", getAllOrders);
 router.get("/orders/:orders_idorders/items", getOrderItems);
 router.get("/pickers", getPickers);
-router.patch("/pickers/:id/status", setPickerActive);
 router.post("/reassign", reassignOrder);
 router.get("/remarks", getAllRemarks);
 router.post("/escalations", createEscalation);
