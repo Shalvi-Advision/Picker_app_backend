@@ -166,6 +166,40 @@ exports.completeOrder = async (req, res) => {
   }
 };
 
+exports.getMyNotifications = async (req, res) => {
+  try {
+    const Notification = require("../models/Notification");
+    const { unread_only } = req.query;
+    const filter = { user_id: req.user._id };
+    if (unread_only === "true") filter.read = false;
+    const list = await Notification.find(filter).sort({ createdAt: -1 }).limit(100);
+    const unreadCount = await Notification.countDocuments({ user_id: req.user._id, read: false });
+    res.json({ success: true, data: list, unread_count: unreadCount });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.markMyNotificationRead = async (req, res) => {
+  try {
+    const Notification = require("../models/Notification");
+    const { id } = req.params;
+    if (id === "all") {
+      await Notification.updateMany({ user_id: req.user._id, read: false }, { read: true });
+      return res.json({ success: true, message: "All marked as read" });
+    }
+    const n = await Notification.findOneAndUpdate(
+      { _id: id, user_id: req.user._id },
+      { read: true },
+      { new: true }
+    );
+    if (!n) return res.status(404).json({ success: false, message: "Notification not found" });
+    res.json({ success: true, data: n });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.setMyAvailability = async (req, res) => {
   try {
     const { is_active } = req.body;

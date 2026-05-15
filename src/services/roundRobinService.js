@@ -54,7 +54,8 @@ const assignOrder = async (orders_idorders, store_code, project_code, assigned_b
     assignedTo,
     "New Order Assigned",
     `Order #${orders_idorders} has been assigned to you.`,
-    { orders_idorders: String(orders_idorders), store_code }
+    { orders_idorders: String(orders_idorders), store_code },
+    "order_assigned"
   );
 
   return assignment;
@@ -94,7 +95,8 @@ const reassignOrder = async (orders_idorders, new_picker_id, manager_id) => {
     new_picker_id,
     "Order Reassigned to You",
     `Order #${orders_idorders} has been reassigned to you.`,
-    { orders_idorders: String(orders_idorders) }
+    { orders_idorders: String(orders_idorders) },
+    "order_assigned"
   );
 
   return assignment;
