@@ -108,66 +108,6 @@ exports.markNotificationRead = async (req, res) => {
   }
 };
 
-exports.setPickerActive = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { is_active } = req.body;
-    if (typeof is_active !== "boolean") {
-      return res.status(400).json({ success: false, message: "is_active boolean required" });
-    }
-    const picker = await PickerUser.findOne({
-      _id: id,
-      role: "picker",
-      store_codes: { $in: req.user.store_codes },
-    });
-    if (!picker) return res.status(404).json({ success: false, message: "Picker not found" });
-
-    picker.is_active = is_active;
-    await picker.save();
-
-    notifyManagersOfPickerToggle(picker, is_active, req.user).catch((e) =>
-      console.error("notifyManagersOfPickerToggle failed:", e.message)
-    );
-
-    const safe = picker.toObject();
-    delete safe.password;
-    res.json({ success: true, data: safe });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-async function notifyManagersOfPickerToggle(picker, isActive, actor) {
-  const managers = await PickerUser.find({
-    role: "store_manager",
-    store_codes: { $in: picker.store_codes },
-    _id: { $ne: actor._id }, // don't notify the manager who did it
-  }).select("_id");
-
-  const title = isActive ? "Picker available" : "Picker paused";
-  const body = isActive
-    ? `${picker.name} marked available by ${actor.name}.`
-    : `${picker.name} paused by ${actor.name} — round-robin will skip them.`;
-
-  await Promise.all(
-    managers.map((m) =>
-      sendToUser(
-        m._id,
-        title,
-        body,
-        {
-          picker_id: String(picker._id),
-          picker_name: picker.name,
-          is_active: String(isActive),
-          actor_name: actor.name,
-          store_codes: picker.store_codes.join(","),
-        },
-        "picker_availability"
-      )
-    )
-  );
-}
-
 exports.reassignOrder = async (req, res) => {
   try {
     const { orders_idorders, new_picker_id } = req.body;
