@@ -39,11 +39,14 @@ exports.getAllOrders = async (req, res) => {
 
 exports.getPickers = async (req, res) => {
   try {
+    // Return every picker in the manager's stores, including paused ones —
+    // the manager needs to see them to toggle them back on.
     const pickers = await PickerUser.find({
       role: "picker",
       store_codes: { $in: req.user.store_codes },
-      is_active: true,
-    }).select("-password");
+    })
+      .select("-password")
+      .sort({ is_active: -1, name: 1 }); // active first, then alphabetical
 
     const pickerIds = pickers.map((p) => p._id);
     const activeCounts = await PickerAssignment.aggregate([
