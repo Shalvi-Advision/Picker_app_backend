@@ -163,7 +163,8 @@ exports.getOrderItems = async (req, res) => {
     const { orders_idorders } = req.params;
     const orderId = Number(orders_idorders);
     const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 0));
+    const rawLimit = parseInt(req.query.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(200, rawLimit) : 0;
 
     const order = await Order.findOne({ orders_idorders: orderId, store_code: { $in: req.user.store_codes } });
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });

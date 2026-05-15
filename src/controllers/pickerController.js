@@ -46,7 +46,8 @@ exports.getOrderItems = async (req, res) => {
   try {
     const { orders_idorders } = req.params;
     const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 0));
+    const rawLimit = parseInt(req.query.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(200, rawLimit) : 0;
 
     const assignment = await PickerAssignment.findOne({
       orders_idorders: Number(orders_idorders),
