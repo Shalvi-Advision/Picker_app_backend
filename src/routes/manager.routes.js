@@ -12,6 +12,8 @@ const {
   resolveEscalation,
   getEscalations,
   triggerAssignment,
+  getNotifications,
+  markNotificationRead,
 } = require("../controllers/managerController");
 
 router.use(auth, roleGuard("store_manager"));
@@ -26,5 +28,7 @@ router.post("/escalations", createEscalation);
 router.put("/escalations/:id/resolve", resolveEscalation);
 router.get("/escalations", getEscalations);
 router.post("/assign-order", triggerAssignment);
+router.get("/notifications", getNotifications);
+router.patch("/notifications/:id/read", markNotificationRead);
 
 module.exports = router;

@@ -3,6 +3,7 @@ const PickerAssignment = require("../models/PickerAssignment");
 const PickerItemStatus = require("../models/PickerItemStatus");
 const PickerEscalation = require("../models/PickerEscalation");
 const PickerUser = require("../models/PickerUser");
+const Notification = require("../models/Notification");
 const { reassignOrder } = require("../services/roundRobinService");
 const { sendToUser } = require("../services/notificationService");
 
@@ -63,6 +64,47 @@ exports.getPickers = async (req, res) => {
   }
 };
 
+exports.getNotifications = async (req, res) => {
+  try {
+    const { unread_only } = req.query;
+    const filter = { user_id: req.user._id };
+    if (unread_only === "true") filter.read = false;
+
+    const list = await Notification.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(100);
+    const unreadCount = await Notification.countDocuments({
+      user_id: req.user._id,
+      read: false,
+    });
+    res.json({ success: true, data: list, unread_count: unreadCount });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.markNotificationRead = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (id === "all") {
+      await Notification.updateMany(
+        { user_id: req.user._id, read: false },
+        { read: true }
+      );
+      return res.json({ success: true, message: "All marked as read" });
+    }
+    const n = await Notification.findOneAndUpdate(
+      { _id: id, user_id: req.user._id },
+      { read: true },
+      { new: true }
+    );
+    if (!n) return res.status(404).json({ success: false, message: "Notification not found" });
+    res.json({ success: true, data: n });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.setPickerActive = async (req, res) => {
   try {
     const { id } = req.params;
@@ -79,6 +121,11 @@ exports.setPickerActive = async (req, res) => {
 
     picker.is_active = is_active;
     await picker.save();
+
+    notifyManagersOfPickerToggle(picker, is_active, req.user).catch((e) =>
+      console.error("notifyManagersOfPickerToggle failed:", e.message)
+    );
+
     const safe = picker.toObject();
     delete safe.password;
     res.json({ success: true, data: safe });
@@ -86,6 +133,37 @@ exports.setPickerActive = async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
+async function notifyManagersOfPickerToggle(picker, isActive, actor) {
+  const managers = await PickerUser.find({
+    role: "store_manager",
+    store_codes: { $in: picker.store_codes },
+    _id: { $ne: actor._id }, // don't notify the manager who did it
+  }).select("_id");
+
+  const title = isActive ? "Picker available" : "Picker paused";
+  const body = isActive
+    ? `${picker.name} marked available by ${actor.name}.`
+    : `${picker.name} paused by ${actor.name} — round-robin will skip them.`;
+
+  await Promise.all(
+    managers.map((m) =>
+      sendToUser(
+        m._id,
+        title,
+        body,
+        {
+          picker_id: String(picker._id),
+          picker_name: picker.name,
+          is_active: String(isActive),
+          actor_name: actor.name,
+          store_codes: picker.store_codes.join(","),
+        },
+        "picker_availability"
+      )
+    )
+  );
+}
 
 exports.reassignOrder = async (req, res) => {
   try {

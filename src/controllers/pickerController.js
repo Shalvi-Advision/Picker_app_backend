@@ -178,11 +178,47 @@ exports.setMyAvailability = async (req, res) => {
       { new: true }
     ).select("-password");
     if (!updated) return res.status(404).json({ success: false, message: "Picker not found" });
+
+    // Fire-and-forget: notify managers of the picker's stores.
+    notifyManagersOfAvailability(updated, is_active).catch((e) =>
+      console.error("notifyManagersOfAvailability failed:", e.message)
+    );
+
     res.json({ success: true, data: updated });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
+async function notifyManagersOfAvailability(picker, isActive) {
+  const { sendToUser } = require("../services/notificationService");
+  const managers = await PickerUser.find({
+    role: "store_manager",
+    store_codes: { $in: picker.store_codes },
+  }).select("_id");
+
+  const title = isActive ? "Picker available" : "Picker paused";
+  const body = isActive
+    ? `${picker.name} is now available for new orders.`
+    : `${picker.name} has paused — round-robin will skip them.`;
+
+  await Promise.all(
+    managers.map((m) =>
+      sendToUser(
+        m._id,
+        title,
+        body,
+        {
+          picker_id: String(picker._id),
+          picker_name: picker.name,
+          is_active: String(isActive),
+          store_codes: picker.store_codes.join(","),
+        },
+        "picker_availability"
+      )
+    )
+  );
+}
 
 exports.rejectOrder = async (req, res) => {
   try {
