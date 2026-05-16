@@ -185,7 +185,7 @@ exports.createTestOrder = async (req, res) => {
  */
 async function notifyManagersOfNewOrder(order) {
   const managers = await PickerUser.find({
-    role: "store_manager",
+    role: "manager",
     store_codes: order.store_code,
   }).select("_id");
 

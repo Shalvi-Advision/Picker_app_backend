@@ -16,7 +16,7 @@ const {
   sendOrderToSuperAdmin,
 } = require("../controllers/managerController");
 
-router.use(auth, roleGuard("store_manager"));
+router.use(auth, roleGuard("manager"));
 
 router.get("/orders", getAllOrders);
 router.get("/orders/:orders_idorders/items", getOrderItems);

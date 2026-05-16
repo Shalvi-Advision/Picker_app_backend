@@ -15,24 +15,24 @@ const {
   deleteUser,
 } = require("../controllers/superAdminController");
 
-router.use(auth, roleGuard("super_admin"));
+router.use(auth);
 
-router.get("/dashboard", getDashboardKpis);
+// Routes shared by mobile `admin` and web `super_admin`.
+// These show only orders that managers have explicitly escalated upward.
+const sharedGuard = roleGuard("admin", "super_admin");
+router.get("/dashboard", sharedGuard, getDashboardKpis);
+router.get("/orders", sharedGuard, getOrders);
+router.get("/orders/:orders_idorders/items", sharedGuard, getOrderItems);
+router.get("/notifications", sharedGuard, getNotifications);
+router.patch("/notifications/:id/read", sharedGuard, markNotificationRead);
 
-// Orders
-router.get("/orders", getOrders); // sent-to-super-admin only (legacy)
-router.get("/all-orders", getAllOrders); // every order across stores
-router.get("/orders/:orders_idorders/items", getOrderItems);
-router.get("/stores", listStores);
-
-// User management (RBAC: super_admin only)
-router.get("/users", listUsers);
-router.post("/users", createUser);
-router.patch("/users/:id", updateUser);
-router.delete("/users/:id", deleteUser);
-
-// Notifications
-router.get("/notifications", getNotifications);
-router.patch("/notifications/:id/read", markNotificationRead);
+// Web admin panel only — Retail Magic super_admin.
+const ownerOnly = roleGuard("super_admin");
+router.get("/all-orders", ownerOnly, getAllOrders);
+router.get("/stores", ownerOnly, listStores);
+router.get("/users", ownerOnly, listUsers);
+router.post("/users", ownerOnly, createUser);
+router.patch("/users/:id", ownerOnly, updateUser);
+router.delete("/users/:id", ownerOnly, deleteUser);
 
 module.exports = router;

@@ -6,7 +6,7 @@ const PickerItemStatus = require("../models/PickerItemStatus");
 const Notification = require("../models/Notification");
 const PickerUser = require("../models/PickerUser");
 
-const ALLOWED_ROLES = ["picker", "store_manager", "super_admin"];
+const ALLOWED_ROLES = ["picker", "manager", "admin", "super_admin"];
 
 // Only orders that have been explicitly sent up by a manager.
 const SENT_FILTER = { sent_to_super_admin: true };
@@ -206,10 +206,12 @@ exports.createUser = async (req, res) => {
     if (!ALLOWED_ROLES.includes(role)) {
       return res.status(400).json({ success: false, message: "Invalid role" });
     }
-    if (role !== "super_admin" && (!Array.isArray(store_codes) || store_codes.length === 0)) {
+    // picker + manager are store-scoped; admin + super_admin are unscoped.
+    const isUnscoped = role === "admin" || role === "super_admin";
+    if (!isUnscoped && (!Array.isArray(store_codes) || store_codes.length === 0)) {
       return res
         .status(400)
-        .json({ success: false, message: "store_codes required for non super_admin users" });
+        .json({ success: false, message: "store_codes required for picker and manager roles" });
     }
 
     const existing = await PickerUser.findOne({ email: email.toLowerCase() });
@@ -224,7 +226,7 @@ exports.createUser = async (req, res) => {
       phone,
       password: hashed,
       role,
-      store_codes: role === "super_admin" ? [] : store_codes.map((c) => c.toUpperCase()),
+      store_codes: isUnscoped ? [] : store_codes.map((c) => c.toUpperCase()),
       project_code,
       is_active,
     });
