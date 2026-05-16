@@ -160,11 +160,43 @@ exports.completeOrder = async (req, res) => {
 
     await Order.updateOne({ orders_idorders: Number(orders_idorders) }, { status: "completed" });
 
+    // Fire-and-forget: notify managers of the store that the order is complete.
+    notifyManagersOfCompletedOrder(Number(orders_idorders), req.user).catch((e) =>
+      console.error("notifyManagersOfCompletedOrder failed:", e.message)
+    );
+
     res.json({ success: true, message: "Order completed", data: assignment });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
+async function notifyManagersOfCompletedOrder(ordersIdorders, picker) {
+  const { sendToUser } = require("../services/notificationService");
+  const order = await Order.findOne({ orders_idorders: ordersIdorders });
+  if (!order) return;
+
+  const managers = await PickerUser.find({
+    role: "store_manager",
+    store_codes: order.store_code,
+  }).select("_id");
+
+  await Promise.all(
+    managers.map((m) =>
+      sendToUser(
+        m._id,
+        "Order completed",
+        `Order #${order.orders_idorders} (${order.store_code}) completed by ${picker.name}.`,
+        {
+          orders_idorders: String(order.orders_idorders),
+          store_code: order.store_code,
+          picker_name: picker.name || "",
+        },
+        "order_completed"
+      )
+    )
+  );
+}
 
 exports.getMyNotifications = async (req, res) => {
   try {
