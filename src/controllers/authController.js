@@ -14,7 +14,7 @@ const UI_CONFIG = {
     can_escalate: false,
     can_view_all_stores: false,
   },
-  store_manager: {
+  manager: {
     nav_items: [
       { key: "all_orders", label: "All Orders", icon: "dashboard" },
       { key: "pickers", label: "Pickers", icon: "people" },
@@ -27,10 +27,19 @@ const UI_CONFIG = {
     can_escalate: true,
     can_view_all_stores: true,
   },
-  super_admin: {
+  admin: {
     nav_items: [
       { key: "dashboard", label: "Dashboard", icon: "dashboard" },
     ],
+    order_actions: [],
+    item_actions: [],
+    can_reassign: false,
+    can_escalate: false,
+    can_view_all_stores: true,
+  },
+  super_admin: {
+    // Web admin panel only — mobile app rejects this role at login.
+    nav_items: [],
     order_actions: [],
     item_actions: [],
     can_reassign: false,
@@ -41,7 +50,7 @@ const UI_CONFIG = {
 
 exports.login = async (req, res) => {
   try {
-    const { project_code, store_code, email, password } = req.body;
+    const { project_code, store_code, email, password, client } = req.body;
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -54,8 +63,28 @@ exports.login = async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
-    // Super admin bypasses project/store checks; they're not tied to any store.
-    if (user.role !== "super_admin") {
+    // Hard RBAC by client surface:
+    //   client="admin_panel" (web) → only super_admin allowed
+    //   client="mobile" or unset (legacy) → super_admin forbidden, mobile roles only
+    if (client === "admin_panel") {
+      if (user.role !== "super_admin") {
+        return res
+          .status(403)
+          .json({ success: false, message: "This panel is for super admins only." });
+      }
+    } else {
+      if (user.role === "super_admin") {
+        return res.status(403).json({
+          success: false,
+          message: "Super admins must use the web admin panel.",
+        });
+      }
+    }
+
+    // admin (mobile top-of-hierarchy) bypasses project/store checks like the old super_admin did.
+    // picker and manager remain store-scoped.
+    const requiresStoreCheck = user.role === "picker" || user.role === "manager";
+    if (requiresStoreCheck) {
       if (!project_code || !store_code) {
         return res.status(400).json({
           success: false,
