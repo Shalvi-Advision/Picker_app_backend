@@ -177,7 +177,7 @@ async function notifyManagersOfCompletedOrder(ordersIdorders, picker) {
   if (!order) return;
 
   const managers = await PickerUser.find({
-    role: "store_manager",
+    role: "manager",
     store_codes: order.store_code,
   }).select("_id");
 
@@ -259,7 +259,7 @@ exports.setMyAvailability = async (req, res) => {
 async function notifyManagersOfAvailability(picker, isActive) {
   const { sendToUser } = require("../services/notificationService");
   const managers = await PickerUser.find({
-    role: "store_manager",
+    role: "manager",
     store_codes: { $in: picker.store_codes },
   }).select("_id");
 

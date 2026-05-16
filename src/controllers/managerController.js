@@ -290,7 +290,8 @@ exports.sendOrderToSuperAdmin = async (req, res) => {
 };
 
 async function notifySuperAdminsOfOrder(order, manager) {
-  const admins = await PickerUser.find({ role: "super_admin" }).select("_id");
+  // Notify both mobile `admin` users and the web `super_admin` (Retail Magic owner).
+  const admins = await PickerUser.find({ role: { $in: ["admin", "super_admin"] } }).select("_id");
   await Promise.all(
     admins.map((a) =>
       sendToUser(
