@@ -27,15 +27,25 @@ const UI_CONFIG = {
     can_escalate: true,
     can_view_all_stores: true,
   },
+  super_admin: {
+    nav_items: [
+      { key: "dashboard", label: "Dashboard", icon: "dashboard" },
+    ],
+    order_actions: [],
+    item_actions: [],
+    can_reassign: false,
+    can_escalate: false,
+    can_view_all_stores: true,
+  },
 };
 
 exports.login = async (req, res) => {
   try {
     const { project_code, store_code, email, password } = req.body;
-    if (!project_code || !store_code || !email || !password) {
+    if (!email || !password) {
       return res.status(400).json({
         success: false,
-        message: "Project code, branch code, username and password are required",
+        message: "Email and password are required",
       });
     }
 
@@ -44,12 +54,20 @@ exports.login = async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
-    if (user.project_code !== project_code.trim()) {
-      return res.status(401).json({ success: false, message: "Invalid project code" });
-    }
-
-    if (!user.store_codes.includes(store_code.trim().toUpperCase())) {
-      return res.status(401).json({ success: false, message: "Invalid branch code" });
+    // Super admin bypasses project/store checks; they're not tied to any store.
+    if (user.role !== "super_admin") {
+      if (!project_code || !store_code) {
+        return res.status(400).json({
+          success: false,
+          message: "Project code and branch code are required",
+        });
+      }
+      if (user.project_code !== project_code.trim()) {
+        return res.status(401).json({ success: false, message: "Invalid project code" });
+      }
+      if (!user.store_codes.includes(store_code.trim().toUpperCase())) {
+        return res.status(401).json({ success: false, message: "Invalid branch code" });
+      }
     }
 
     const match = await bcrypt.compare(password, user.password);

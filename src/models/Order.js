@@ -14,11 +14,15 @@ const orderSchema = new mongoose.Schema(
       enum: ["pending", "assigned", "in_progress", "completed", "rejected"],
       default: "pending",
     },
+    sent_to_super_admin: { type: Boolean, default: false },
+    sent_to_super_admin_at: { type: Date, default: null },
+    sent_to_super_admin_by: { type: mongoose.Schema.Types.ObjectId, ref: "PickerUser", default: null },
     synced_at: { type: Date, default: Date.now },
   },
   { timestamps: true }
 );
 
 orderSchema.index({ store_code: 1, status: 1 });
+orderSchema.index({ sent_to_super_admin: 1, sent_to_super_admin_at: -1 });
 
 module.exports = mongoose.model("Order", orderSchema, "orders");

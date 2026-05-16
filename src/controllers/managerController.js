@@ -252,3 +252,58 @@ exports.triggerAssignment = async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
+// Manager flags a completed order for the super admin to review.
+exports.sendOrderToSuperAdmin = async (req, res) => {
+  try {
+    const orderId = Number(req.params.orders_idorders);
+    const order = await Order.findOne({ orders_idorders: orderId });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+    if (!req.user.store_codes.includes(order.store_code)) {
+      return res.status(403).json({ success: false, message: "Order is outside your stores" });
+    }
+    if (order.status !== "completed") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Only completed orders can be sent to super admin" });
+    }
+    if (order.sent_to_super_admin) {
+      return res.json({ success: true, data: order, already_sent: true });
+    }
+
+    order.sent_to_super_admin = true;
+    order.sent_to_super_admin_at = new Date();
+    order.sent_to_super_admin_by = req.user._id;
+    await order.save();
+
+    // Fire-and-forget notify super admins.
+    notifySuperAdminsOfOrder(order, req.user).catch((e) =>
+      console.error("notifySuperAdminsOfOrder failed:", e.message)
+    );
+
+    res.json({ success: true, data: order });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+async function notifySuperAdminsOfOrder(order, manager) {
+  const admins = await PickerUser.find({ role: "super_admin" }).select("_id");
+  await Promise.all(
+    admins.map((a) =>
+      sendToUser(
+        a._id,
+        "Order sent for review",
+        `Order #${order.orders_idorders} (${order.store_code}) sent by ${manager.name}.`,
+        {
+          orders_idorders: String(order.orders_idorders),
+          store_code: order.store_code,
+          manager_name: manager.name || "",
+        },
+        "order_sent_to_super_admin"
+      )
+    )
+  );
+}

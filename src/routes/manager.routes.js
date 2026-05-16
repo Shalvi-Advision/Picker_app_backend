@@ -13,12 +13,14 @@ const {
   triggerAssignment,
   getNotifications,
   markNotificationRead,
+  sendOrderToSuperAdmin,
 } = require("../controllers/managerController");
 
 router.use(auth, roleGuard("store_manager"));
 
 router.get("/orders", getAllOrders);
 router.get("/orders/:orders_idorders/items", getOrderItems);
+router.post("/orders/:orders_idorders/send-to-super-admin", sendOrderToSuperAdmin);
 router.get("/pickers", getPickers);
 router.post("/reassign", reassignOrder);
 router.get("/remarks", getAllRemarks);
