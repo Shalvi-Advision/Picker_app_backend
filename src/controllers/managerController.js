@@ -1,4 +1,5 @@
 const Order = require("../models/Order");
+const OrderItem = require("../models/OrderItem");
 const PickerAssignment = require("../models/PickerAssignment");
 const PickerItemStatus = require("../models/PickerItemStatus");
 const PickerEscalation = require("../models/PickerEscalation");
@@ -6,6 +7,31 @@ const PickerUser = require("../models/PickerUser");
 const Notification = require("../models/Notification");
 const { reassignOrder } = require("../services/roundRobinService");
 const { sendToUser } = require("../services/notificationService");
+
+// Fetch all order_items for the given order IDs in one query and group them by
+// orders_idorders, attaching each item's picker_status so embedded items match
+// the standalone /orders/:id/items endpoint.
+const buildItemsMap = async (orderIds) => {
+  if (!orderIds.length) return {};
+
+  const [items, itemStatuses] = await Promise.all([
+    OrderItem.find({ orders_idorders: { $in: orderIds } }).lean(),
+    PickerItemStatus.find({ orders_idorders: { $in: orderIds } }).lean(),
+  ]);
+
+  const statusByItemId = Object.fromEntries(
+    itemStatuses.map((s) => [s.order_item_id, s])
+  );
+
+  const map = {};
+  for (const item of items) {
+    (map[item.orders_idorders] ||= []).push({
+      ...item,
+      picker_status: statusByItemId[String(item._id)] || null,
+    });
+  }
+  return map;
+};
 
 exports.getAllOrders = async (req, res) => {
   try {
@@ -26,9 +52,12 @@ exports.getAllOrders = async (req, res) => {
       if (!assignmentsMap[a.orders_idorders]) assignmentsMap[a.orders_idorders] = a;
     }
 
+    const itemsMap = await buildItemsMap(orderIds);
+
     const result = orders.map((o) => ({
       ...o.toObject(),
       current_assignment: assignmentsMap[o.orders_idorders] || null,
+      items: itemsMap[o.orders_idorders] || [],
     }));
 
     res.json({ success: true, data: result });
@@ -214,7 +243,6 @@ exports.getOrderItems = async (req, res) => {
     const order = await Order.findOne({ orders_idorders: orderId, store_code: { $in: req.user.store_codes } });
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
 
-    const OrderItem = require("../models/OrderItem");
     const filter = { orders_idorders: orderId };
     const total = await OrderItem.countDocuments(filter);
 
