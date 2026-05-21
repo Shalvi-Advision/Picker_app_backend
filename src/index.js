@@ -40,8 +40,8 @@ const startOrderSyncCron = () => {
     try {
       const result = await upsertOrders();
       console.log(
-        `[order-sync] ${result.orders_new} new / ${result.orders_updated} updated orders, ` +
-          `${result.items_new} new / ${result.items_updated} updated items`
+        `[order-sync] ${result.orders_new} new / ${result.orders_updated} updated / ` +
+          `${result.orders_skipped_in_progress} skipped orders, ${result.items_written} items written`
       );
     } catch (err) {
       console.error("[order-sync] failed:", err.message);

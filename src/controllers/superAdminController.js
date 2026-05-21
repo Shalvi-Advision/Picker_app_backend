@@ -12,6 +12,41 @@ const ALLOWED_ROLES = ["picker", "manager", "admin", "super_admin"];
 // Only orders that have been explicitly sent up by a manager.
 const SENT_FILTER = { sent_to_super_admin: true };
 
+// Fetch all order_items for the given order IDs in one query and group them by
+// orders_idorders, attaching each item's picker_status (from the latest
+// assignment) so embedded items match the standalone items endpoint.
+const buildItemsMap = async (orderIds) => {
+  if (!orderIds.length) return {};
+
+  const [items, assignments] = await Promise.all([
+    OrderItem.find({ orders_idorders: { $in: orderIds } }).lean(),
+    PickerAssignment.find({ orders_idorders: { $in: orderIds } })
+      .sort({ assigned_at: -1 })
+      .lean(),
+  ]);
+
+  // Latest assignment per order (used to resolve picker item statuses).
+  const latestAssignment = {};
+  for (const a of assignments) {
+    if (!latestAssignment[a.orders_idorders]) latestAssignment[a.orders_idorders] = a;
+  }
+  const assignmentIds = Object.values(latestAssignment).map((a) => a._id);
+
+  const itemStatuses = assignmentIds.length
+    ? await PickerItemStatus.find({ assignment_id: { $in: assignmentIds } }).lean()
+    : [];
+  const statusByItemId = Object.fromEntries(itemStatuses.map((s) => [s.order_item_id, s]));
+
+  const map = {};
+  for (const item of items) {
+    (map[item.orders_idorders] ||= []).push({
+      ...item,
+      picker_status: statusByItemId[item._id] || null,
+    });
+  }
+  return map;
+};
+
 exports.getDashboardKpis = async (req, res) => {
   try {
     const now = new Date();
@@ -67,9 +102,12 @@ exports.getOrders = async (req, res) => {
       if (!assignmentsMap[a.orders_idorders]) assignmentsMap[a.orders_idorders] = a;
     }
 
+    const itemsMap = await buildItemsMap(orderIds);
+
     const result = orders.map((o) => ({
       ...o.toObject(),
       current_assignment: assignmentsMap[o.orders_idorders] || null,
+      items: itemsMap[o.orders_idorders] || [],
     }));
 
     res.json({ success: true, data: result });
@@ -81,11 +119,9 @@ exports.getOrders = async (req, res) => {
 exports.getOrderItems = async (req, res) => {
   try {
     const orderId = Number(req.params.orders_idorders);
-    const order = await Order.findOne({ orders_idorders: orderId, ...SENT_FILTER });
+    const order = await Order.findOne({ orders_idorders: orderId });
     if (!order) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Order not available for super admin" });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
     const assignment = await PickerAssignment.findOne({ orders_idorders: orderId }).sort({
@@ -147,9 +183,12 @@ exports.getAllOrders = async (req, res) => {
       if (!assignmentsMap[a.orders_idorders]) assignmentsMap[a.orders_idorders] = a;
     }
 
+    const itemsMap = await buildItemsMap(orderIds);
+
     const result = orders.map((o) => ({
       ...o.toObject(),
       current_assignment: assignmentsMap[o.orders_idorders] || null,
+      items: itemsMap[o.orders_idorders] || [],
     }));
 
     res.json({ success: true, data: result });

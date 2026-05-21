@@ -176,45 +176,52 @@ const upsertOrders = async (project_code = PROJECT_CODE) => {
   const items = rows.map(mapItem);
   const orders = buildOrders(items);
 
-  // Upsert items by their natural key (order + product), preserving any
-  // picker-set status if the item already exists.
-  const itemOps = items.map((item) => {
-    const { _id, product_picked_status, synced_at, ...fields } = item;
-    return {
-      updateOne: {
-        filter: {
-          orders_idorders: item.orders_idorders,
-          store_code: item.store_code,
-          p_code: item.p_code,
-        },
-        update: {
-          $set: { ...fields, synced_at },
-          $setOnInsert: { _id, product_picked_status },
-        },
-        upsert: true,
-      },
-    };
-  });
+  // Group items by order so we can replace each order's item set atomically.
+  // This is the only reliable way to mirror the upstream row-for-row: the same
+  // product can legitimately appear on multiple lines of one order (e.g. p_code
+  // 1625 under two categories), so there is no stable natural key to upsert on.
+  const itemsByOrder = {};
+  for (const item of items) {
+    (itemsByOrder[item.orders_idorders] ||= []).push(item);
+  }
 
-  // Upsert orders by orders_idorders, preserving picker workflow status fields.
-  const orderOps = orders.map((order) => {
+  // Don't touch orders a picker has already started — replacing their items
+  // would wipe in-flight picking. Only pending (or brand-new) orders are synced.
+  const incomingIds = orders.map((o) => o.orders_idorders);
+  const lockedOrders = await Order.find({
+    orders_idorders: { $in: incomingIds },
+    status: { $ne: "pending" },
+  })
+    .select("orders_idorders")
+    .lean();
+  const locked = new Set(lockedOrders.map((o) => o.orders_idorders));
+
+  let ordersNew = 0;
+  let ordersUpdated = 0;
+  let itemsWritten = 0;
+  let ordersSkipped = 0;
+
+  for (const order of orders) {
+    if (locked.has(order.orders_idorders)) {
+      ordersSkipped += 1;
+      continue;
+    }
+
     const { status, synced_at, ...fields } = order;
-    return {
-      updateOne: {
-        filter: { orders_idorders: order.orders_idorders },
-        update: {
-          $set: { ...fields, synced_at },
-          $setOnInsert: { status },
-        },
-        upsert: true,
-      },
-    };
-  });
+    const res = await Order.updateOne(
+      { orders_idorders: order.orders_idorders },
+      { $set: { ...fields, synced_at }, $setOnInsert: { status } },
+      { upsert: true }
+    );
+    if (res.upsertedCount) ordersNew += 1;
+    else if (res.modifiedCount) ordersUpdated += 1;
 
-  let itemResult = { upsertedCount: 0, modifiedCount: 0 };
-  let orderResult = { upsertedCount: 0, modifiedCount: 0 };
-  if (itemOps.length) itemResult = await OrderItem.bulkWrite(itemOps, { ordered: false });
-  if (orderOps.length) orderResult = await Order.bulkWrite(orderOps, { ordered: false });
+    // Replace this order's items wholesale so every upstream row is its own doc.
+    const orderItems = itemsByOrder[order.orders_idorders] || [];
+    await OrderItem.deleteMany({ orders_idorders: order.orders_idorders });
+    if (orderItems.length) await OrderItem.insertMany(orderItems);
+    itemsWritten += orderItems.length;
+  }
 
   await SyncLog.create({
     project_code,
@@ -227,10 +234,10 @@ const upsertOrders = async (project_code = PROJECT_CODE) => {
     project_code,
     orders_seen: orders.length,
     items_seen: items.length,
-    orders_new: orderResult.upsertedCount,
-    orders_updated: orderResult.modifiedCount,
-    items_new: itemResult.upsertedCount,
-    items_updated: itemResult.modifiedCount,
+    orders_new: ordersNew,
+    orders_updated: ordersUpdated,
+    orders_skipped_in_progress: ordersSkipped,
+    items_written: itemsWritten,
   };
 };
 
