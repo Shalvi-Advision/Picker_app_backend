@@ -1,52 +1,7 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const PickerUser = require("../models/PickerUser");
-
-const UI_CONFIG = {
-  picker: {
-    nav_items: [
-      { key: "my_orders", label: "My Orders", icon: "list" },
-      { key: "scan_barcode", label: "Scan Item", icon: "barcode" },
-    ],
-    order_actions: ["start_picking", "reject"],
-    item_actions: ["mark_picked", "mark_not_available", "mark_expired", "mark_damaged"],
-    can_reassign: false,
-    can_escalate: false,
-    can_view_all_stores: false,
-  },
-  manager: {
-    nav_items: [
-      { key: "all_orders", label: "All Orders", icon: "dashboard" },
-      { key: "pickers", label: "Pickers", icon: "people" },
-      { key: "remarks", label: "Remarks", icon: "comment" },
-      { key: "escalations", label: "Escalations", icon: "warning" },
-    ],
-    order_actions: ["reassign", "escalate"],
-    item_actions: [],
-    can_reassign: true,
-    can_escalate: true,
-    can_view_all_stores: true,
-  },
-  admin: {
-    nav_items: [
-      { key: "dashboard", label: "Dashboard", icon: "dashboard" },
-    ],
-    order_actions: [],
-    item_actions: [],
-    can_reassign: false,
-    can_escalate: false,
-    can_view_all_stores: true,
-  },
-  super_admin: {
-    // Web admin panel only — mobile app rejects this role at login.
-    nav_items: [],
-    order_actions: [],
-    item_actions: [],
-    can_reassign: false,
-    can_escalate: false,
-    can_view_all_stores: true,
-  },
-};
+const { buildUiConfig } = require("../services/capabilityService");
 
 exports.login = async (req, res) => {
   try {
@@ -120,7 +75,7 @@ exports.login = async (req, res) => {
         project_code: user.project_code,
         is_active: user.is_active,
       },
-      ui_config: UI_CONFIG[user.role],
+      ui_config: await buildUiConfig(user),
     });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -141,6 +96,6 @@ exports.me = async (req, res) => {
   res.json({
     success: true,
     user: req.user,
-    ui_config: UI_CONFIG[req.user.role],
+    ui_config: await buildUiConfig(req.user),
   });
 };

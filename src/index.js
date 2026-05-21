@@ -7,6 +7,7 @@ const cron = require("node-cron");
 const connectPickerDB = require("./config/pickerDB");
 const { initFirebase } = require("./config/firebase");
 const { upsertOrders } = require("./services/orderSyncService");
+const seedRolePermissions = require("./services/seedRolePermissions");
 
 const app = express();
 
@@ -53,6 +54,7 @@ const startOrderSyncCron = () => {
 const start = async () => {
   await connectPickerDB();
   initFirebase();
+  await seedRolePermissions();
   startOrderSyncCron();
   app.listen(PORT, () => console.log(`Picker API running on port ${PORT}`));
 };
