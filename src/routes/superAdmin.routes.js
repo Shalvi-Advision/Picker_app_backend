@@ -15,6 +15,10 @@ const {
   deleteUser,
   syncOrders,
 } = require("../controllers/superAdminController");
+const {
+  getCapabilities,
+  updateRoleCapabilities,
+} = require("../controllers/rbacController");
 
 router.use(auth);
 
@@ -35,6 +39,10 @@ router.get("/users", ownerOnly, listUsers);
 router.post("/users", ownerOnly, createUser);
 router.patch("/users/:id", ownerOnly, updateUser);
 router.delete("/users/:id", ownerOnly, deleteUser);
+
+// Capability-based RBAC management.
+router.get("/capabilities", ownerOnly, getCapabilities);
+router.patch("/roles/:role/capabilities", ownerOnly, updateRoleCapabilities);
 
 // DESTRUCTIVE manual reset: clears & replaces all orders from the source API.
 router.post("/sync-orders", ownerOnly, syncOrders);
