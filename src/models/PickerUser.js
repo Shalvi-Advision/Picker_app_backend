@@ -14,6 +14,10 @@ const pickerUserSchema = new mongoose.Schema(
     project_code: { type: String, default: "RET3163" },
     fcm_token: { type: String, default: null },
     is_active: { type: Boolean, default: true },
+    // Per-user capability overrides: capKey -> true (force-grant) / false
+    // (force-deny). Absent keys fall back to the role default. Does NOT gate
+    // login — permissions only.
+    capability_overrides: { type: Map, of: Boolean, default: {} },
   },
   { timestamps: true }
 );
