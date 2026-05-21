@@ -13,6 +13,7 @@ const {
   createUser,
   updateUser,
   deleteUser,
+  syncOrders,
 } = require("../controllers/superAdminController");
 
 router.use(auth);
@@ -34,5 +35,8 @@ router.get("/users", ownerOnly, listUsers);
 router.post("/users", ownerOnly, createUser);
 router.patch("/users/:id", ownerOnly, updateUser);
 router.delete("/users/:id", ownerOnly, deleteUser);
+
+// DESTRUCTIVE manual reset: clears & replaces all orders from the source API.
+router.post("/sync-orders", ownerOnly, syncOrders);
 
 module.exports = router;

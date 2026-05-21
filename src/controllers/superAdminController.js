@@ -5,6 +5,7 @@ const PickerAssignment = require("../models/PickerAssignment");
 const PickerItemStatus = require("../models/PickerItemStatus");
 const Notification = require("../models/Notification");
 const PickerUser = require("../models/PickerUser");
+const { replaceOrders, PROJECT_CODE } = require("../services/orderSyncService");
 
 const ALLOWED_ROLES = ["picker", "manager", "admin", "super_admin"];
 
@@ -307,5 +308,18 @@ exports.markNotificationRead = async (req, res) => {
     res.json({ success: true, data: n });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// DESTRUCTIVE: pull fresh pending orders from the upstream project API, then
+// wipe and replace all orders / order_items / downstream picker data for the
+// project. Use the cron's incremental upsert for routine syncing.
+exports.syncOrders = async (req, res) => {
+  try {
+    const project_code = req.body?.project_code || PROJECT_CODE;
+    const result = await replaceOrders(project_code);
+    res.json({ success: true, message: "Orders replaced from source", data: result });
+  } catch (err) {
+    res.status(502).json({ success: false, message: err.message });
   }
 };

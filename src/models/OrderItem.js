@@ -24,6 +24,9 @@ const orderItemSchema = new mongoose.Schema(
     delivery_date: String,
     pcode_img: { type: String, default: null },
     product_picked_status: { type: String, default: "Pending" },
+    delivery_details: { type: String, default: null },
+    latitude: { type: String, default: null },
+    longitude: { type: String, default: null },
     synced_at: { type: Date, default: Date.now },
   },
   { _id: false, timestamps: false }

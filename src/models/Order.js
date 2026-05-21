@@ -9,6 +9,9 @@ const orderSchema = new mongoose.Schema(
     delivery_date: { type: String },
     total_items: { type: Number, default: 0 },
     total_amount: { type: Number, default: 0 },
+    delivery_details: { type: String, default: null },
+    latitude: { type: String, default: null },
+    longitude: { type: String, default: null },
     status: {
       type: String,
       enum: ["pending", "assigned", "in_progress", "completed", "rejected"],
