@@ -6,8 +6,21 @@ const PickerItemStatus = require("../models/PickerItemStatus");
 const Notification = require("../models/Notification");
 const PickerUser = require("../models/PickerUser");
 const { replaceOrders, PROJECT_CODE } = require("../services/orderSyncService");
+const { CAPABILITY_KEYS } = require("../constants/capabilities");
 
 const ALLOWED_ROLES = ["picker", "manager", "admin", "super_admin"];
+
+// Keep only known capability keys with boolean values. Returns a plain object
+// suitable for the PickerUser.capability_overrides Map field.
+function sanitizeOverrides(input) {
+  const clean = {};
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    for (const [key, val] of Object.entries(input)) {
+      if (CAPABILITY_KEYS.has(key)) clean[key] = Boolean(val);
+    }
+  }
+  return clean;
+}
 
 // Only orders that have been explicitly sent up by a manager.
 const SENT_FILTER = { sent_to_super_admin: true };
@@ -236,6 +249,7 @@ exports.createUser = async (req, res) => {
       store_codes = [],
       project_code = "RET3163",
       is_active = true,
+      capability_overrides = {},
     } = req.body;
 
     if (!name || !email || !phone || !password || !role) {
@@ -269,6 +283,7 @@ exports.createUser = async (req, res) => {
       store_codes: isUnscoped ? [] : store_codes.map((c) => c.toUpperCase()),
       project_code,
       is_active,
+      capability_overrides: sanitizeOverrides(capability_overrides),
     });
 
     const safe = user.toObject();
@@ -282,13 +297,17 @@ exports.createUser = async (req, res) => {
 exports.updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, phone, role, store_codes, is_active, password, project_code } = req.body;
+    const { name, phone, role, store_codes, is_active, password, project_code, capability_overrides } =
+      req.body;
 
     const update = {};
     if (name !== undefined) update.name = name;
     if (phone !== undefined) update.phone = phone;
     if (project_code !== undefined) update.project_code = project_code;
     if (is_active !== undefined) update.is_active = is_active;
+    if (capability_overrides !== undefined) {
+      update.capability_overrides = sanitizeOverrides(capability_overrides);
+    }
     if (role !== undefined) {
       if (!ALLOWED_ROLES.includes(role)) {
         return res.status(400).json({ success: false, message: "Invalid role" });
