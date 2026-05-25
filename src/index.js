@@ -42,7 +42,8 @@ const startOrderSyncCron = () => {
       const result = await upsertOrders();
       console.log(
         `[order-sync] ${result.orders_new} new / ${result.orders_updated} updated / ` +
-          `${result.orders_skipped_in_progress} skipped orders, ${result.items_written} items written`
+          `${result.orders_skipped_in_progress} skipped orders, ${result.items_written} items written, ` +
+          `${result.orders_auto_assigned} auto-assigned (${result.orders_auto_assign_failed} failed)`
       );
     } catch (err) {
       console.error("[order-sync] failed:", err.message);

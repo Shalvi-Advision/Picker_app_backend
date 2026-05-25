@@ -6,6 +6,7 @@ const PickerItemStatus = require("../models/PickerItemStatus");
 const PickerEscalation = require("../models/PickerEscalation");
 const RoundRobinState = require("../models/RoundRobinState");
 const SyncLog = require("../models/SyncLog");
+const { assignOrder } = require("./roundRobinService");
 
 const SOURCE_URL =
   process.env.SOURCE_ORDERS_API_URL ||
@@ -200,6 +201,8 @@ const upsertOrders = async (project_code = PROJECT_CODE) => {
   let ordersUpdated = 0;
   let itemsWritten = 0;
   let ordersSkipped = 0;
+  let ordersAutoAssigned = 0;
+  const autoAssignFailures = [];
 
   for (const order of orders) {
     if (locked.has(order.orders_idorders)) {
@@ -213,7 +216,8 @@ const upsertOrders = async (project_code = PROJECT_CODE) => {
       { $set: { ...fields, synced_at }, $setOnInsert: { status } },
       { upsert: true }
     );
-    if (res.upsertedCount) ordersNew += 1;
+    const isNew = Boolean(res.upsertedCount);
+    if (isNew) ordersNew += 1;
     else if (res.modifiedCount) ordersUpdated += 1;
 
     // Replace this order's items wholesale so every upstream row is its own doc.
@@ -221,6 +225,28 @@ const upsertOrders = async (project_code = PROJECT_CODE) => {
     await OrderItem.deleteMany({ orders_idorders: order.orders_idorders });
     if (orderItems.length) await OrderItem.insertMany(orderItems);
     itemsWritten += orderItems.length;
+
+    // Auto-assign brand-new orders via round-robin. Isolated try/catch so one
+    // store with no active pickers doesn't poison the rest of the sync.
+    if (isNew) {
+      try {
+        await assignOrder(order.orders_idorders, order.store_code, order.project_code, null);
+        ordersAutoAssigned += 1;
+      } catch (err) {
+        autoAssignFailures.push({
+          orders_idorders: order.orders_idorders,
+          store_code: order.store_code,
+          error: err.message,
+        });
+      }
+    }
+  }
+
+  if (autoAssignFailures.length) {
+    console.warn(
+      `[order-sync] auto-assign failed for ${autoAssignFailures.length} order(s):`,
+      autoAssignFailures
+    );
   }
 
   await SyncLog.create({
@@ -238,6 +264,8 @@ const upsertOrders = async (project_code = PROJECT_CODE) => {
     orders_updated: ordersUpdated,
     orders_skipped_in_progress: ordersSkipped,
     items_written: itemsWritten,
+    orders_auto_assigned: ordersAutoAssigned,
+    orders_auto_assign_failed: autoAssignFailures.length,
   };
 };
 
