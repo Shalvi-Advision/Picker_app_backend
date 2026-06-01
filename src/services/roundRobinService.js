@@ -50,13 +50,31 @@ const assignOrder = async (orders_idorders, store_code, project_code, assigned_b
 
   await Order.updateOne({ orders_idorders }, { status: "assigned" });
 
-  await sendToUser(
-    assignedTo,
-    "New Order Assigned",
-    `Order #${orders_idorders} has been assigned to you.`,
-    { orders_idorders: String(orders_idorders), store_code },
-    "order_assigned"
-  );
+  const [pickerUser, storeManagers] = await Promise.all([
+    PickerUser.findById(assignedTo).select("name"),
+    PickerUser.find({ role: "manager", store_codes: store_code, project_code }).select("_id"),
+  ]);
+
+  const pickerName = pickerUser?.name || "A picker";
+
+  await Promise.all([
+    sendToUser(
+      assignedTo,
+      "New Order Assigned",
+      `Order #${orders_idorders} has been assigned to you.`,
+      { orders_idorders: String(orders_idorders), store_code },
+      "order_assigned"
+    ),
+    ...storeManagers.map((m) =>
+      sendToUser(
+        m._id,
+        "Order Assigned",
+        `Order #${orders_idorders} has been assigned to ${pickerName}.`,
+        { orders_idorders: String(orders_idorders), store_code },
+        "order_assigned"
+      )
+    ),
+  ]);
 
   return assignment;
 };
@@ -91,13 +109,33 @@ const reassignOrder = async (orders_idorders, new_picker_id, manager_id) => {
   // Push order back to "assigned" since it now has an active picker
   await Order.updateOne({ orders_idorders }, { status: "assigned" });
 
-  await sendToUser(
-    new_picker_id,
-    "Order Reassigned to You",
-    `Order #${orders_idorders} has been reassigned to you.`,
-    { orders_idorders: String(orders_idorders) },
-    "order_assigned"
-  );
+  const [newPickerUser, storeManagers] = await Promise.all([
+    PickerUser.findById(new_picker_id).select("name"),
+    PickerUser.find({ role: "manager", store_codes: current.store_code, project_code: current.project_code }).select("_id"),
+  ]);
+
+  const newPickerName = newPickerUser?.name || "A picker";
+
+  await Promise.all([
+    sendToUser(
+      new_picker_id,
+      "Order Reassigned to You",
+      `Order #${orders_idorders} has been reassigned to you.`,
+      { orders_idorders: String(orders_idorders) },
+      "order_assigned"
+    ),
+    ...storeManagers
+      .filter((m) => String(m._id) !== String(manager_id))
+      .map((m) =>
+        sendToUser(
+          m._id,
+          "Order Reassigned",
+          `Order #${orders_idorders} has been reassigned to ${newPickerName}.`,
+          { orders_idorders: String(orders_idorders), store_code: current.store_code },
+          "order_assigned"
+        )
+      ),
+  ]);
 
   return assignment;
 };
