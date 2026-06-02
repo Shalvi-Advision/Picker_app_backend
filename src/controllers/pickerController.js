@@ -307,8 +307,44 @@ exports.rejectOrder = async (req, res) => {
 
     await Order.updateOne({ orders_idorders: Number(orders_idorders) }, { status: "pending" });
 
+    notifyManagersOfRejectedOrder(Number(orders_idorders), req.user, reason).catch((e) =>
+      console.error("notifyManagersOfRejectedOrder failed:", e.message)
+    );
+
     res.json({ success: true, message: "Order rejected", data: assignment });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
+async function notifyManagersOfRejectedOrder(ordersIdorders, picker, reason) {
+  const { sendToUser } = require("../services/notificationService");
+  const order = await Order.findOne({ orders_idorders: ordersIdorders });
+  if (!order) return;
+
+  const managers = await PickerUser.find({
+    role: "manager",
+    store_codes: order.store_code,
+  }).select("_id");
+
+  const body = reason
+    ? `Order #${ordersIdorders} (${order.store_code}) rejected by ${picker.name}: "${reason}"`
+    : `Order #${ordersIdorders} (${order.store_code}) rejected by ${picker.name}. No reason given.`;
+
+  await Promise.all(
+    managers.map((m) =>
+      sendToUser(
+        m._id,
+        "Order Rejected by Picker",
+        body,
+        {
+          orders_idorders: String(ordersIdorders),
+          store_code: order.store_code,
+          picker_name: picker.name || "",
+          reason: reason || "",
+        },
+        "order_rejected"
+      )
+    )
+  );
+}
