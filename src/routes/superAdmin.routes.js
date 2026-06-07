@@ -20,6 +20,12 @@ const {
   getCapabilities,
   updateRoleCapabilities,
 } = require("../controllers/rbacController");
+const {
+  listProjectStores,
+  createProjectStore,
+  deleteProjectStore,
+  getStoreUsers,
+} = require("../controllers/projectStoreController");
 
 router.use(auth);
 
@@ -45,6 +51,12 @@ router.delete("/users/:id", ownerOnly, deleteUser);
 // Capability-based RBAC management.
 router.get("/capabilities", ownerOnly, getCapabilities);
 router.patch("/roles/:role/capabilities", ownerOnly, updateRoleCapabilities);
+
+// Project → store code mappings.
+router.get("/project-stores", ownerOnly, listProjectStores);
+router.post("/project-stores", ownerOnly, createProjectStore);
+router.delete("/project-stores/:id", ownerOnly, deleteProjectStore);
+router.get("/project-stores/:project_code/stores/:store_code/users", ownerOnly, getStoreUsers);
 
 // DESTRUCTIVE manual reset: clears & replaces all orders from the source API.
 router.post("/sync-orders", ownerOnly, syncOrders);
