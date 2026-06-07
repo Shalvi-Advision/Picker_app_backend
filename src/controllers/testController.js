@@ -83,7 +83,10 @@ const SAMPLE_PRODUCTS = [
 exports.createTestOrder = async (req, res) => {
   try {
     const storeCode = (req.body.store_code || "SHD").toUpperCase();
-    const projectCode = req.body.project_code || "RET3163";
+    const projectCode = (req.body.project_code || "").toUpperCase();
+    if (!projectCode) {
+      return res.status(400).json({ success: false, message: "project_code is required" });
+    }
     const itemCount = Math.min(SAMPLE_PRODUCTS.length, Math.max(1, parseInt(req.body.item_count) || 3));
 
     // Generate a unique order id if caller didn't supply one

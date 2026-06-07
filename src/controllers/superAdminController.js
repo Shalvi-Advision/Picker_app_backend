@@ -62,14 +62,18 @@ const buildItemsMap = async (orderIds) => {
 
 exports.getDashboardKpis = async (req, res) => {
   try {
+    const { project_code } = req.query;
+    const baseFilter = { ...SENT_FILTER };
+    if (project_code) baseFilter.project_code = project_code.toUpperCase();
+
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const [total, thisMonth, agg] = await Promise.all([
-      Order.countDocuments(SENT_FILTER),
-      Order.countDocuments({ ...SENT_FILTER, sent_to_super_admin_at: { $gte: monthStart } }),
+      Order.countDocuments(baseFilter),
+      Order.countDocuments({ ...baseFilter, sent_to_super_admin_at: { $gte: monthStart } }),
       Order.aggregate([
-        { $match: SENT_FILTER },
+        { $match: baseFilter },
         {
           $group: {
             _id: null,
@@ -99,8 +103,9 @@ exports.getDashboardKpis = async (req, res) => {
 
 exports.getOrders = async (req, res) => {
   try {
-    const { store_code } = req.query;
+    const { store_code, project_code } = req.query;
     const filter = { ...SENT_FILTER };
+    if (project_code) filter.project_code = project_code.toUpperCase();
     if (store_code) filter.store_code = store_code;
 
     const orders = await Order.find(filter).sort({ sent_to_super_admin_at: -1 });
@@ -177,8 +182,9 @@ exports.getNotifications = async (req, res) => {
 
 exports.getAllOrders = async (req, res) => {
   try {
-    const { status, store_code, sent } = req.query;
+    const { status, store_code, sent, project_code } = req.query;
     const filter = {};
+    if (project_code) filter.project_code = project_code.toUpperCase();
     if (status) filter.status = status;
     if (store_code) filter.store_code = store_code;
     if (sent === "true") filter.sent_to_super_admin = true;
@@ -212,8 +218,19 @@ exports.getAllOrders = async (req, res) => {
 
 exports.listStores = async (req, res) => {
   try {
-    const stores = await Order.distinct("store_code");
+    const { project_code } = req.query;
+    const filter = project_code ? { project_code: project_code.toUpperCase() } : {};
+    const stores = await Order.distinct("store_code", filter);
     res.json({ success: true, data: stores.sort() });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.listProjects = async (_req, res) => {
+  try {
+    const projects = await Order.distinct("project_code");
+    res.json({ success: true, data: projects.filter(Boolean).sort() });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -221,8 +238,9 @@ exports.listStores = async (req, res) => {
 
 exports.listUsers = async (req, res) => {
   try {
-    const { role, store_code, q } = req.query;
+    const { role, store_code, q, project_code } = req.query;
     const filter = {};
+    if (project_code) filter.project_code = project_code.toUpperCase();
     if (role) filter.role = role;
     if (store_code) filter.store_codes = store_code;
     if (q) {

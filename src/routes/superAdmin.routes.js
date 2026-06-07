@@ -9,6 +9,7 @@ const {
   markNotificationRead,
   getAllOrders,
   listStores,
+  listProjects,
   listUsers,
   createUser,
   updateUser,
@@ -35,6 +36,7 @@ router.patch("/notifications/:id/read", sharedGuard, markNotificationRead);
 const ownerOnly = roleGuard("super_admin");
 router.get("/all-orders", ownerOnly, getAllOrders);
 router.get("/stores", ownerOnly, listStores);
+router.get("/projects", ownerOnly, listProjects);
 router.get("/users", ownerOnly, listUsers);
 router.post("/users", ownerOnly, createUser);
 router.patch("/users/:id", ownerOnly, updateUser);

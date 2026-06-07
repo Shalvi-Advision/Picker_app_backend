@@ -11,7 +11,7 @@ const { assignOrder } = require("./roundRobinService");
 const SOURCE_URL =
   process.env.SOURCE_ORDERS_API_URL ||
   "https://picker.shalviadvision.com/api/get_project_pending_orders";
-const PROJECT_CODE = process.env.SYNC_PROJECT_CODE || "RET3163";
+const PROJECT_CODE = process.env.SYNC_PROJECT_CODE || "";
 
 // The upstream API serialises everything as strings, and uses the literal
 // "null" string for empty geo fields. Normalise both here.
