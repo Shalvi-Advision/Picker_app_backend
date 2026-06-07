@@ -20,6 +20,7 @@ app.use("/api/auth", require("./routes/auth.routes"));
 app.use("/api/picker", require("./routes/picker.routes"));
 app.use("/api/manager", require("./routes/manager.routes"));
 app.use("/api/super-admin", require("./routes/superAdmin.routes"));
+app.use("/api/webhook", require("./routes/webhook.routes"));
 app.use("/api/test", require("./routes/test.routes"));
 
 app.get("/health", (req, res) => res.json({ status: "ok", timestamp: new Date() }));

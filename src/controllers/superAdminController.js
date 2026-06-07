@@ -247,7 +247,7 @@ exports.createUser = async (req, res) => {
       password,
       role,
       store_codes = [],
-      project_code = "RET3163",
+      project_code = "",
       is_active = true,
       capability_overrides = {},
     } = req.body;
@@ -266,6 +266,11 @@ exports.createUser = async (req, res) => {
       return res
         .status(400)
         .json({ success: false, message: "store_codes required for picker and manager roles" });
+    }
+    if (!isUnscoped && !project_code) {
+      return res
+        .status(400)
+        .json({ success: false, message: "project_code required for picker and manager roles" });
     }
 
     const existing = await PickerUser.findOne({ email: email.toLowerCase() });

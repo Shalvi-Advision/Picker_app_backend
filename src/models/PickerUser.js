@@ -11,7 +11,7 @@ const pickerUserSchema = new mongoose.Schema(
     //   super_admin = Retail Magic owner, web admin panel only
     role: { type: String, enum: ["picker", "manager", "admin", "super_admin"], required: true },
     store_codes: { type: [String], default: [] },
-    project_code: { type: String, default: "RET3163" },
+    project_code: { type: String, default: "" },
     fcm_token: { type: String, default: null },
     is_active: { type: Boolean, default: true },
     // Per-user capability overrides: capKey -> true (force-grant) / false
