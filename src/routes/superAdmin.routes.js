@@ -15,6 +15,7 @@ const {
   updateUser,
   deleteUser,
   syncOrders,
+  getWebhookLogs,
 } = require("../controllers/superAdminController");
 const {
   getCapabilities,
@@ -60,5 +61,8 @@ router.get("/project-stores/:project_code/stores/:store_code/users", ownerOnly, 
 
 // DESTRUCTIVE manual reset: clears & replaces all orders from the source API.
 router.post("/sync-orders", ownerOnly, syncOrders);
+
+// Webhook call history.
+router.get("/webhook-logs", ownerOnly, getWebhookLogs);
 
 module.exports = router;

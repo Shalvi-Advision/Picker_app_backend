@@ -5,6 +5,7 @@ const PickerAssignment = require("../models/PickerAssignment");
 const PickerItemStatus = require("../models/PickerItemStatus");
 const Notification = require("../models/Notification");
 const PickerUser = require("../models/PickerUser");
+const WebhookLog = require("../models/WebhookLog");
 const { replaceOrders, PROJECT_CODE } = require("../services/orderSyncService");
 const { CAPABILITY_KEYS } = require("../constants/capabilities");
 
@@ -402,5 +403,27 @@ exports.syncOrders = async (req, res) => {
     res.json({ success: true, message: "Orders replaced from source", data: result });
   } catch (err) {
     res.status(502).json({ success: false, message: err.message });
+  }
+};
+
+exports.getWebhookLogs = async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    const skip  = parseInt(req.query.skip) || 0;
+    const { status, store_code, project_code } = req.query;
+
+    const filter = {};
+    if (status)       filter.status       = status;
+    if (store_code)   filter.store_code   = store_code.toUpperCase();
+    if (project_code) filter.project_code = project_code.toUpperCase();
+
+    const [logs, total] = await Promise.all([
+      WebhookLog.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      WebhookLog.countDocuments(filter),
+    ]);
+
+    res.json({ success: true, data: { logs, total, limit, skip } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
