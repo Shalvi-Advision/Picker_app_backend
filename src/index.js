@@ -3,10 +3,8 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
-const cron = require("node-cron");
 const connectPickerDB = require("./config/pickerDB");
 const { initFirebase } = require("./config/firebase");
-const { upsertOrders } = require("./services/orderSyncService");
 const seedRolePermissions = require("./services/seedRolePermissions");
 
 const app = express();
@@ -32,32 +30,10 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 
-const startOrderSyncCron = () => {
-  const schedule = process.env.CRON_INTERVAL || "*/5 * * * *";
-  if (!cron.validate(schedule)) {
-    console.error(`Invalid CRON_INTERVAL "${schedule}" — order sync cron not started`);
-    return;
-  }
-  cron.schedule(schedule, async () => {
-    try {
-      const result = await upsertOrders();
-      console.log(
-        `[order-sync] ${result.orders_new} new / ${result.orders_updated} updated / ` +
-          `${result.orders_skipped_in_progress} skipped orders, ${result.items_written} items written, ` +
-          `${result.orders_auto_assigned} auto-assigned (${result.orders_auto_assign_failed} failed)`
-      );
-    } catch (err) {
-      console.error("[order-sync] failed:", err.message);
-    }
-  });
-  console.log(`Order sync cron scheduled (${schedule})`);
-};
-
 const start = async () => {
   await connectPickerDB();
   initFirebase();
   await seedRolePermissions();
-  // startOrderSyncCron(); // temporarily disabled
   app.listen(PORT, () => console.log(`Picker API running on port ${PORT}`));
 };
 
