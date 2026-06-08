@@ -57,7 +57,7 @@ const start = async () => {
   await connectPickerDB();
   initFirebase();
   await seedRolePermissions();
-  startOrderSyncCron();
+  // startOrderSyncCron(); // temporarily disabled
   app.listen(PORT, () => console.log(`Picker API running on port ${PORT}`));
 };
 
