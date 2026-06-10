@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const OrderItem = require("../models/OrderItem");
 const WebhookLog = require("../models/WebhookLog");
+const ProjectStore = require("../models/ProjectStore");
 const { assignOrder } = require("../services/roundRobinService");
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
@@ -148,7 +149,14 @@ exports.receiveOrder = async (req, res) => {
 
     await OrderItem.insertMany(orderItems);
 
-    // 5. Auto-assign
+    // 5. Auto-register project+store mapping if it doesn't exist yet
+    await ProjectStore.updateOne(
+      { project_code: String(project_code).toUpperCase(), store_code: String(store_code).toUpperCase() },
+      { $setOnInsert: { project_code: String(project_code).toUpperCase(), store_code: String(store_code).toUpperCase() } },
+      { upsert: true }
+    );
+
+    // 6. Auto-assign
     let assignment = null;
     let assignError = null;
     try {

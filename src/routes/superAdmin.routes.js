@@ -16,6 +16,7 @@ const {
   deleteUser,
   syncOrders,
   getWebhookLogs,
+  backfillProjectStores,
 } = require("../controllers/superAdminController");
 const {
   getCapabilities,
@@ -64,5 +65,8 @@ router.post("/sync-orders", ownerOnly, syncOrders);
 
 // Webhook call history.
 router.get("/webhook-logs", ownerOnly, getWebhookLogs);
+
+// One-time backfill: create ProjectStore mappings for all (project, store) pairs in orders.
+router.post("/backfill-project-stores", ownerOnly, backfillProjectStores);
 
 module.exports = router;

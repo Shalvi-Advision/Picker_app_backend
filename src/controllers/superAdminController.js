@@ -6,6 +6,7 @@ const PickerItemStatus = require("../models/PickerItemStatus");
 const Notification = require("../models/Notification");
 const PickerUser = require("../models/PickerUser");
 const WebhookLog = require("../models/WebhookLog");
+const ProjectStore = require("../models/ProjectStore");
 const { replaceOrders, PROJECT_CODE } = require("../services/orderSyncService");
 const { CAPABILITY_KEYS } = require("../constants/capabilities");
 
@@ -423,6 +424,31 @@ exports.getWebhookLogs = async (req, res) => {
     ]);
 
     res.json({ success: true, data: { logs, total, limit, skip } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// Backfill: create ProjectStore mappings for every unique (project_code, store_code)
+// pair found in orders that doesn't already have a mapping.
+exports.backfillProjectStores = async (_req, res) => {
+  try {
+    const pairs = await Order.aggregate([
+      { $group: { _id: { project_code: "$project_code", store_code: "$store_code" } } },
+    ]);
+
+    let created = 0;
+    for (const { _id: { project_code, store_code } } of pairs) {
+      if (!project_code || !store_code) continue;
+      const result = await ProjectStore.updateOne(
+        { project_code, store_code },
+        { $setOnInsert: { project_code, store_code } },
+        { upsert: true }
+      );
+      if (result.upsertedCount) created++;
+    }
+
+    res.json({ success: true, message: `Backfill complete — ${created} new mapping(s) created`, total_pairs: pairs.length, created });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
