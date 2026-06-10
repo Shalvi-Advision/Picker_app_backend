@@ -184,13 +184,17 @@ exports.getNotifications = async (req, res) => {
 
 exports.getAllOrders = async (req, res) => {
   try {
-    const { status, store_code, sent, project_code } = req.query;
+    const { status, store_code, sent, project_code, order_id } = req.query;
     const filter = {};
     if (project_code) filter.project_code = project_code.toUpperCase();
     if (status) filter.status = status;
     if (store_code) filter.store_code = store_code;
     if (sent === "true") filter.sent_to_super_admin = true;
     if (sent === "false") filter.sent_to_super_admin = { $ne: true };
+    if (order_id && order_id.trim()) {
+      const n = Number(order_id.trim());
+      filter.orders_idorders = Number.isFinite(n) ? n : -1;
+    }
 
     const orders = await Order.find(filter).sort({ order_date: -1 }).limit(500);
 
@@ -411,12 +415,16 @@ exports.getWebhookLogs = async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 100, 500);
     const skip  = parseInt(req.query.skip) || 0;
-    const { status, store_code, project_code } = req.query;
+    const { status, store_code, project_code, order_id } = req.query;
 
     const filter = {};
     if (status)       filter.status       = status;
     if (store_code)   filter.store_code   = store_code.toUpperCase();
     if (project_code) filter.project_code = project_code.toUpperCase();
+    if (order_id && order_id.trim()) {
+      const n = Number(order_id.trim());
+      filter.orders_idorders = Number.isFinite(n) ? n : -1;
+    }
 
     const [logs, total] = await Promise.all([
       WebhookLog.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
