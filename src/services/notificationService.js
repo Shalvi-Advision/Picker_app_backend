@@ -14,21 +14,59 @@ const sendToUser = async (userId, title, body, data = {}, type = "info") => {
       metadata: data,
     });
   } catch (err) {
-    console.error("Notification persist failed:", err.message);
+    console.error("[notification] DB persist failed:", err.message);
   }
 
   // 2. Try to deliver an FCM push.
   try {
     const user = await PickerUser.findById(userId).select("fcm_token name");
-    if (!user?.fcm_token) return;
+    if (!user?.fcm_token) {
+      console.warn(`[notification] user ${userId} has no FCM token — skipping push`);
+      return;
+    }
     await admin.messaging().send({
       token: user.fcm_token,
       notification: { title, body },
       data: { ...data, type },
     });
+    console.log(`[notification] FCM push sent → user ${userId} (${user.name}): "${title}"`);
   } catch (err) {
-    console.error("FCM send failed:", err.message);
+    console.error(`[notification] FCM push failed → user ${userId}: [${err.code || "unknown"}] ${err.message}`);
   }
 };
 
-module.exports = { sendToUser };
+/**
+ * Notify all managers of a store that a new order has arrived.
+ * Called immediately after order creation so managers are informed even if
+ * round-robin assignment later fails (no active pickers).
+ */
+const notifyManagersOfNewOrder = async (order) => {
+  const managers = await PickerUser.find({
+    role: "manager",
+    store_codes: order.store_code,
+  }).select("_id");
+
+  if (!managers.length) {
+    console.warn(`[notification] no managers found for store ${order.store_code} — skipping new-order notification`);
+    return;
+  }
+
+  await Promise.all(
+    managers.map((m) =>
+      sendToUser(
+        m._id,
+        "New order received",
+        `Order #${order.orders_idorders} (${order.store_code}) — ${order.total_items} item${order.total_items === 1 ? "" : "s"}, ₹${order.total_amount}`,
+        {
+          orders_idorders: String(order.orders_idorders),
+          store_code: order.store_code,
+          total_items: String(order.total_items),
+          total_amount: String(order.total_amount),
+        },
+        "order_received"
+      )
+    )
+  );
+};
+
+module.exports = { sendToUser, notifyManagersOfNewOrder };

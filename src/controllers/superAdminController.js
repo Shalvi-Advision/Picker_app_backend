@@ -310,7 +310,7 @@ exports.createUser = async (req, res) => {
       password: hashed,
       role,
       store_codes: isUnscoped ? [] : store_codes.map((c) => c.toUpperCase()),
-      project_code,
+      project_code: project_code ? String(project_code).toUpperCase() : "",
       is_active,
       capability_overrides: sanitizeOverrides(capability_overrides),
     });
@@ -332,7 +332,7 @@ exports.updateUser = async (req, res) => {
     const update = {};
     if (name !== undefined) update.name = name;
     if (phone !== undefined) update.phone = phone;
-    if (project_code !== undefined) update.project_code = project_code;
+    if (project_code !== undefined) update.project_code = project_code ? String(project_code).toUpperCase() : "";
     if (is_active !== undefined) update.is_active = is_active;
     if (capability_overrides !== undefined) {
       update.capability_overrides = sanitizeOverrides(capability_overrides);

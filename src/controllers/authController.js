@@ -46,7 +46,7 @@ exports.login = async (req, res) => {
           message: "Project code and branch code are required",
         });
       }
-      if (user.project_code !== project_code.trim()) {
+      if (user.project_code.toUpperCase() !== project_code.trim().toUpperCase()) {
         return res.status(401).json({ success: false, message: "Invalid project code" });
       }
       if (!user.store_codes.includes(store_code.trim().toUpperCase())) {

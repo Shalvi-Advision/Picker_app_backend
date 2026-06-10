@@ -1,7 +1,6 @@
 const Order = require("../models/Order");
 const OrderItem = require("../models/OrderItem");
-const PickerUser = require("../models/PickerUser");
-const { sendToUser } = require("../services/notificationService");
+const { notifyManagersOfNewOrder } = require("../services/notificationService");
 
 // Real catalog products (from PickerDB CSV) — used for test order generation.
 // Each entry includes a pcode_img so UI image rendering can be tested end-to-end.
@@ -180,34 +179,3 @@ exports.createTestOrder = async (req, res) => {
   }
 };
 
-/**
- * Fan-out push + persisted notification to every manager whose store_codes
- * include the new order's store_code.
- *
- * Reusable — call this from any future order-ingestion path.
- */
-async function notifyManagersOfNewOrder(order) {
-  const managers = await PickerUser.find({
-    role: "manager",
-    store_codes: order.store_code,
-  }).select("_id");
-
-  await Promise.all(
-    managers.map((m) =>
-      sendToUser(
-        m._id,
-        "New order received",
-        `Order #${order.orders_idorders} (${order.store_code}) — ${order.total_items} item${order.total_items === 1 ? "" : "s"}, ₹${order.total_amount}`,
-        {
-          orders_idorders: String(order.orders_idorders),
-          store_code: order.store_code,
-          total_items: String(order.total_items),
-          total_amount: String(order.total_amount),
-        },
-        "order_received"
-      )
-    )
-  );
-}
-
-exports.notifyManagersOfNewOrder = notifyManagersOfNewOrder;

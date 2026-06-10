@@ -52,7 +52,7 @@ const assignOrder = async (orders_idorders, store_code, project_code, assigned_b
 
   const [pickerUser, storeManagers] = await Promise.all([
     PickerUser.findById(assignedTo).select("name"),
-    PickerUser.find({ role: "manager", store_codes: store_code, project_code }).select("_id"),
+    PickerUser.find({ role: "manager", store_codes: store_code }).select("_id"),
   ]);
 
   const pickerName = pickerUser?.name || "A picker";
@@ -111,7 +111,7 @@ const reassignOrder = async (orders_idorders, new_picker_id, manager_id) => {
 
   const [newPickerUser, storeManagers] = await Promise.all([
     PickerUser.findById(new_picker_id).select("name"),
-    PickerUser.find({ role: "manager", store_codes: current.store_code, project_code: current.project_code }).select("_id"),
+    PickerUser.find({ role: "manager", store_codes: current.store_code }).select("_id"),
   ]);
 
   const newPickerName = newPickerUser?.name || "A picker";
