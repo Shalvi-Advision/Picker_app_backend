@@ -28,6 +28,21 @@ const sendToUser = async (userId, title, body, data = {}, type = "info") => {
       token: user.fcm_token,
       notification: { title, body },
       data: { ...data, type },
+      android: {
+        notification: {
+          channelId: "picker_orders_v2",
+          sound: "notification",
+          priority: "max",
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: "notification.wav",
+            badge: 1,
+          },
+        },
+      },
     });
     console.log(`[notification] FCM push sent → user ${userId} (${user.name}): "${title}"`);
   } catch (err) {
