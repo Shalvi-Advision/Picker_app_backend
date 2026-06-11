@@ -46,7 +46,21 @@ const sendToUser = async (userId, title, body, data = {}, type = "info") => {
     });
     console.log(`[notification] FCM push sent → user ${userId} (${user.name}): "${title}"`);
   } catch (err) {
-    console.error(`[notification] FCM push failed → user ${userId}: [${err.code || "unknown"}] ${err.message}`);
+    const staleTokenCodes = [
+      "messaging/registration-token-not-registered",
+      "messaging/invalid-registration-token",
+      "messaging/invalid-argument",
+    ];
+    const isStale =
+      staleTokenCodes.includes(err.code) ||
+      (err.message || "").includes("Requested entity was not found");
+
+    if (isStale) {
+      console.warn(`[notification] stale FCM token for user ${userId} — clearing from DB`);
+      await PickerUser.findByIdAndUpdate(userId, { fcm_token: null }).catch(() => {});
+    } else {
+      console.error(`[notification] FCM push failed → user ${userId}: [${err.code || "unknown"}] ${err.message}`);
+    }
   }
 };
 
