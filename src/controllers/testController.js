@@ -1,6 +1,8 @@
 const Order = require("../models/Order");
 const OrderItem = require("../models/OrderItem");
+const PickerUser = require("../models/PickerUser");
 const { notifyManagersOfNewOrder } = require("../services/notificationService");
+const { admin } = require("../config/firebase");
 
 // Real catalog products (from PickerDB CSV) — used for test order generation.
 // Each entry includes a pcode_img so UI image rendering can be tested end-to-end.
@@ -176,6 +178,113 @@ exports.createTestOrder = async (req, res) => {
   } catch (err) {
     console.error("createTestOrder failed:", err);
     res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * GET /api/test/push-diagnose
+ * No auth — call from browser or Postman to see exactly why FCM is failing.
+ * Returns Firebase init status, FCM token state per user, and a live test send.
+ */
+exports.diagnosePush = async (req, res) => {
+  const report = {};
+
+  // 1. Check Firebase env vars
+  report.env = {
+    FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID ? "SET" : "MISSING",
+    FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL ? "SET" : "MISSING",
+    FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY ? "SET" : "MISSING",
+  };
+
+  // 2. Check Firebase initialization
+  try {
+    const app = admin.app();
+    report.firebase_initialized = true;
+    report.firebase_project = app.options.credential ? "credential configured" : "no credential";
+  } catch (e) {
+    report.firebase_initialized = false;
+    report.firebase_init_error = e.message;
+  }
+
+  // 3. Check FCM token status for all users
+  const users = await PickerUser.find({}, "name email role fcm_token").lean();
+  report.users = users.map((u) => ({
+    id: u._id,
+    name: u.name,
+    email: u.email,
+    role: u.role,
+    fcm_token: u.fcm_token
+      ? `${u.fcm_token.slice(0, 20)}...` // show first 20 chars only
+      : null,
+    has_token: !!u.fcm_token,
+  }));
+
+  report.users_with_token = report.users.filter((u) => u.has_token).length;
+  report.users_without_token = report.users.filter((u) => !u.has_token).length;
+
+  // 4. Live test — send a push to the first user that has a token
+  const target = users.find((u) => u.fcm_token);
+  if (!target) {
+    report.test_push = { skipped: true, reason: "No user has an FCM token in the database" };
+  } else if (!report.firebase_initialized) {
+    report.test_push = { skipped: true, reason: "Firebase not initialized" };
+  } else {
+    try {
+      const messageId = await admin.messaging().send({
+        token: target.fcm_token,
+        notification: { title: "Push Test", body: "FCM is working!" },
+        data: { type: "test" },
+        android: {
+          notification: { channelId: "picker_orders_v2", sound: "notification", priority: "max" },
+        },
+        apns: { payload: { aps: { sound: "notification.wav" } } },
+      });
+      report.test_push = {
+        success: true,
+        sent_to: `${target.name} (${target.email})`,
+        message_id: messageId,
+      };
+    } catch (e) {
+      report.test_push = {
+        success: false,
+        sent_to: `${target.name} (${target.email})`,
+        error_code: e.code || "unknown",
+        error_message: e.message,
+      };
+    }
+  }
+
+  res.json(report);
+};
+
+/**
+ * POST /api/test/push-user/:id
+ * Send a test FCM push to a specific user. No auth — dev/admin use only.
+ */
+exports.testPushToUser = async (req, res) => {
+  try {
+    const user = await PickerUser.findById(req.params.id).select("name email fcm_token").lean();
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    if (!user.fcm_token)
+      return res.status(400).json({ success: false, message: "User has no FCM token" });
+
+    const messageId = await admin.messaging().send({
+      token: user.fcm_token,
+      notification: { title: "Test Push", body: `Admin test push to ${user.name}` },
+      data: { type: "test" },
+      android: {
+        notification: { channelId: "picker_orders_v2", sound: "notification", priority: "max" },
+      },
+      apns: { payload: { aps: { sound: "notification.wav" } } },
+    });
+
+    res.json({ success: true, message_id: messageId, sent_to: user.email });
+  } catch (e) {
+    res.status(500).json({
+      success: false,
+      error_code: e.code || "unknown",
+      error_message: e.message,
+    });
   }
 };
 
