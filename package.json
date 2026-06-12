@@ -21,6 +21,7 @@
     "mongodb": "^6.21.0",
     "mongoose": "^8.23.1",
     "morgan": "^1.10.1",
+    "multer": "^2.1.1",
     "node-cron": "^4.2.1"
   },
   "description": ""

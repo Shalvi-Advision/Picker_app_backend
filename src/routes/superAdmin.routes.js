@@ -69,4 +69,11 @@ router.get("/webhook-logs", ownerOnly, getWebhookLogs);
 // One-time backfill: create ProjectStore mappings for all (project, store) pairs in orders.
 router.post("/backfill-project-stores", ownerOnly, backfillProjectStores);
 
+// ── App Release (APK upload & version management) ─────────────────────────────
+const { upload, getCurrentRelease, publishRelease, deleteApk, listApks } = require("../controllers/appReleaseController");
+router.get("/app-release", ownerOnly, getCurrentRelease);
+router.get("/app-release/files", ownerOnly, listApks);
+router.post("/app-release", ownerOnly, upload.single("apk"), publishRelease);
+router.delete("/app-release/:filename", ownerOnly, deleteApk);
+
 module.exports = router;
