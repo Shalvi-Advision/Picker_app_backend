@@ -68,6 +68,28 @@ exports.publishRelease = (req, res) => {
   res.json({ success: true, data });
 };
 
+// ── PUT /api/super-admin/app-release/store-config  (admin — store URLs + versions) ──
+exports.updateStoreConfig = (req, res) => {
+  const { android_latest_version, android_review_version, ios_latest_version, ios_review_version, play_store_url, app_store_url } = req.body;
+
+  const existing = fs.existsSync(VERSION_FILE)
+    ? JSON.parse(fs.readFileSync(VERSION_FILE, "utf8"))
+    : {};
+
+  const updated = {
+    ...existing,
+    android_latest_version: (android_latest_version || "").trim(),
+    android_review_version: (android_review_version || "").trim(),
+    ios_latest_version: (ios_latest_version || "").trim(),
+    ios_review_version: (ios_review_version || "").trim(),
+    play_store_url: (play_store_url || "").trim(),
+    app_store_url: (app_store_url || "").trim(),
+  };
+
+  fs.writeFileSync(VERSION_FILE, JSON.stringify(updated, null, 2));
+  res.json({ success: true, data: updated });
+};
+
 // ── DELETE /api/super-admin/app-release/:filename  (admin — remove old APK) ───
 exports.deleteApk = (req, res) => {
   const filename = path.basename(req.params.filename); // prevent path traversal
