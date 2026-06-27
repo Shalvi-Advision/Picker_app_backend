@@ -71,8 +71,20 @@ exports.getDashboardKpis = async (req, res) => {
 
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    const [total, thisMonth, agg] = await Promise.all([
+    const deliveryFilter = project_code ? { project_code: project_code.toUpperCase() } : {};
+
+    const [
+      total,
+      thisMonth,
+      agg,
+      readyForDelivery,
+      outForDelivery,
+      deliveredToday,
+      failedDeliveries,
+      activeRiders,
+    ] = await Promise.all([
       Order.countDocuments(baseFilter),
       Order.countDocuments({ ...baseFilter, sent_to_super_admin_at: { $gte: monthStart } }),
       Order.aggregate([
@@ -85,6 +97,15 @@ exports.getDashboardKpis = async (req, res) => {
           },
         },
       ]),
+      Order.countDocuments({ ...deliveryFilter, delivery_status: "ready_for_delivery" }),
+      Order.countDocuments({ ...deliveryFilter, delivery_status: "out_for_delivery" }),
+      DeliveryAssignment.countDocuments({
+        status: "delivered",
+        delivered_at: { $gte: todayStart },
+        ...(project_code ? { project_code: project_code.toUpperCase() } : {}),
+      }),
+      Order.countDocuments({ ...deliveryFilter, delivery_status: "failed" }),
+      PickerUser.countDocuments({ role: "rider", is_active: true }),
     ]);
 
     const totalAmount = agg[0]?.total_amount || 0;
@@ -97,6 +118,13 @@ exports.getDashboardKpis = async (req, res) => {
         sent_this_month: thisMonth,
         total_amount: totalAmount,
         stores_covered: storesCovered,
+        delivery: {
+          ready_for_delivery: readyForDelivery,
+          out_for_delivery: outForDelivery,
+          delivered_today: deliveredToday,
+          failed: failedDeliveries,
+          active_riders: activeRiders,
+        },
       },
     });
   } catch (err) {
@@ -114,13 +142,23 @@ exports.getOrders = async (req, res) => {
     const orders = await Order.find(filter).sort({ sent_to_super_admin_at: -1 });
 
     const orderIds = orders.map((o) => o.orders_idorders);
-    const assignments = await PickerAssignment.find({ orders_idorders: { $in: orderIds } })
-      .populate("assigned_to", "name email phone")
-      .sort({ assigned_at: -1 });
+    const [assignments, deliveryAssignments] = await Promise.all([
+      PickerAssignment.find({ orders_idorders: { $in: orderIds } })
+        .populate("assigned_to", "name email phone")
+        .sort({ assigned_at: -1 }),
+      DeliveryAssignment.find({ orders_idorders: { $in: orderIds } })
+        .populate("rider_id", "name email phone rider_availability")
+        .sort({ assigned_at: -1 }),
+    ]);
 
     const assignmentsMap = {};
     for (const a of assignments) {
       if (!assignmentsMap[a.orders_idorders]) assignmentsMap[a.orders_idorders] = a;
+    }
+
+    const deliveryMap = {};
+    for (const a of deliveryAssignments) {
+      if (!deliveryMap[a.orders_idorders]) deliveryMap[a.orders_idorders] = a;
     }
 
     const itemsMap = await buildItemsMap(orderIds);
@@ -128,6 +166,7 @@ exports.getOrders = async (req, res) => {
     const result = orders.map((o) => ({
       ...o.toObject(),
       current_assignment: assignmentsMap[o.orders_idorders] || null,
+      current_delivery_assignment: deliveryMap[o.orders_idorders] || null,
       items: itemsMap[o.orders_idorders] || [],
     }));
 
@@ -160,6 +199,81 @@ exports.getOrderItems = async (req, res) => {
     const result = items.map((item) => ({
       ...item.toObject(),
       picker_status: statusMap[item._id] || null,
+    }));
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getOrderDelivery = async (req, res) => {
+  try {
+    const orderId = Number(req.params.orders_idorders);
+    const order = await Order.findOne({ orders_idorders: orderId });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const deliveryAssignment = await DeliveryAssignment.findOne({ orders_idorders: orderId })
+      .sort({ assigned_at: -1 })
+      .populate("rider_id", "name email phone rider_availability")
+      .populate("assigned_by", "name email");
+
+    res.json({
+      success: true,
+      data: { order, delivery_assignment: deliveryAssignment },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.listRiders = async (req, res) => {
+  try {
+    const { store_code, project_code, q } = req.query;
+    const filter = { role: "rider" };
+    if (project_code) filter.project_code = project_code.toUpperCase();
+    if (store_code) filter.store_codes = store_code.toUpperCase();
+    if (q && q.trim()) {
+      const rx = new RegExp(q.trim(), "i");
+      filter.$or = [{ name: rx }, { email: rx }, { phone: rx }];
+    }
+
+    const riders = await PickerUser.find(filter).select("-password").sort({ is_active: -1, name: 1 });
+    const riderIds = riders.map((r) => r._id);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const [activeCounts, deliveredToday] = await Promise.all([
+      DeliveryAssignment.aggregate([
+        {
+          $match: {
+            rider_id: { $in: riderIds },
+            status: { $in: ["assigned", "out_for_delivery"] },
+          },
+        },
+        { $group: { _id: "$rider_id", active_deliveries: { $sum: 1 } } },
+      ]),
+      DeliveryAssignment.aggregate([
+        {
+          $match: {
+            rider_id: { $in: riderIds },
+            status: "delivered",
+            delivered_at: { $gte: todayStart },
+          },
+        },
+        { $group: { _id: "$rider_id", delivered_today: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const activeMap = Object.fromEntries(activeCounts.map((c) => [c._id.toString(), c.active_deliveries]));
+    const todayMap = Object.fromEntries(deliveredToday.map((c) => [c._id.toString(), c.delivered_today]));
+
+    const result = riders.map((r) => ({
+      ...r.toObject(),
+      active_deliveries: activeMap[r._id.toString()] || 0,
+      delivered_today: todayMap[r._id.toString()] || 0,
     }));
 
     res.json({ success: true, data: result });

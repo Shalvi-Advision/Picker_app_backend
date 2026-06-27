@@ -377,9 +377,42 @@ exports.getRiders = async (req, res) => {
     const result = riders.map((r) => ({
       ...r.toObject(),
       active_deliveries: countMap[r._id.toString()] || 0,
+      active_orders: countMap[r._id.toString()] || 0,
     }));
 
     res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getRider = async (req, res) => {
+  try {
+    const rider = await PickerUser.findOne({
+      _id: req.params.id,
+      role: "rider",
+      store_codes: { $in: req.user.store_codes },
+    }).select("-password");
+
+    if (!rider) {
+      return res.status(404).json({ success: false, message: "Rider not found" });
+    }
+
+    const recentDeliveries = await DeliveryAssignment.find({ rider_id: rider._id })
+      .sort({ assigned_at: -1 })
+      .limit(25)
+      .lean();
+
+    const orderIds = recentDeliveries.map((d) => d.orders_idorders);
+    const orders = await Order.find({ orders_idorders: { $in: orderIds } }).lean();
+    const ordersMap = Object.fromEntries(orders.map((o) => [o.orders_idorders, o]));
+
+    const deliveries = recentDeliveries.map((d) => ({
+      ...d,
+      order: ordersMap[d.orders_idorders] || null,
+    }));
+
+    res.json({ success: true, data: { rider, deliveries } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

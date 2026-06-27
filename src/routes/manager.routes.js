@@ -16,6 +16,7 @@ const {
   markNotificationRead,
   sendOrderToSuperAdmin,
   getRiders,
+  getRider,
   assignRider,
   reassignRider,
 } = require("../controllers/managerController");
@@ -31,6 +32,7 @@ router.post(
 );
 router.get("/pickers", requireCapability("can_manage_pickers"), getPickers);
 router.get("/riders", requireCapability("can_view_riders"), getRiders);
+router.get("/riders/:id", requireCapability("can_view_riders"), getRider);
 router.post(
   "/orders/:orders_idorders/assign-rider",
   requireCapability("can_assign_rider"),

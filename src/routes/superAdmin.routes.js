@@ -8,6 +8,8 @@ const {
   getNotifications,
   markNotificationRead,
   getAllOrders,
+  getOrderDelivery,
+  listRiders,
   listStores,
   listProjects,
   listUsers,
@@ -43,6 +45,8 @@ router.patch("/notifications/:id/read", sharedGuard, markNotificationRead);
 // Web admin panel only — Retail Magic super_admin.
 const ownerOnly = roleGuard("super_admin");
 router.get("/all-orders", ownerOnly, getAllOrders);
+router.get("/orders/:orders_idorders/delivery", ownerOnly, getOrderDelivery);
+router.get("/riders", ownerOnly, listRiders);
 router.get("/stores", ownerOnly, listStores);
 router.get("/projects", ownerOnly, listProjects);
 router.get("/users", ownerOnly, listUsers);
