@@ -64,6 +64,15 @@ const buildItemsMap = async (orderIds) => {
   return map;
 };
 
+exports.getNotificationTypes = async (_req, res) => {
+  try {
+    const { NOTIFICATION_TYPE_CATALOG } = require("../constants/notificationTypes");
+    res.json({ success: true, data: NOTIFICATION_TYPE_CATALOG });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.getDashboardKpis = async (req, res) => {
   try {
     const { project_code } = req.query;

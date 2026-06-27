@@ -3,6 +3,7 @@ const auth = require("../middleware/auth");
 const roleGuard = require("../middleware/roleGuard");
 const {
   getDashboardKpis,
+  getNotificationTypes,
   getOrders,
   getOrderItems,
   getNotifications,
@@ -40,6 +41,7 @@ router.use(auth);
 // These show only orders that managers have explicitly escalated upward.
 const sharedGuard = roleGuard("admin", "super_admin");
 router.get("/dashboard", sharedGuard, getDashboardKpis);
+router.get("/notification-types", sharedGuard, getNotificationTypes);
 router.get("/orders", sharedGuard, getOrders);
 router.get("/orders/:orders_idorders/items", sharedGuard, getOrderItems);
 router.get("/notifications", sharedGuard, getNotifications);

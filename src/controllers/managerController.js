@@ -9,11 +9,12 @@ const PickerUser = require("../models/PickerUser");
 const Notification = require("../models/Notification");
 const { reassignOrder } = require("../services/roundRobinService");
 const { sendToUser } = require("../services/notificationService");
+const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 const {
   MIN_STOPS,
   MAX_STOPS,
   suggestStopOrder,
-  estimateRouteMetrics,
+  estimateRouteMetricsAsync,
   getStoreOrigin,
   stopsFromOrders,
   buildGoogleMapsDirectionsUrl,
@@ -544,7 +545,7 @@ exports.assignRider = async (req, res) => {
         store_code: order.store_code,
         assignment_id: String(assignment._id),
       },
-      "delivery_assigned"
+      NOTIFICATION_TYPES.DELIVERY_ASSIGNED
     ).catch((e) => console.error("assignRider notify failed:", e.message));
 
     const populated = await DeliveryAssignment.findById(assignment._id).populate(
@@ -625,14 +626,14 @@ exports.reassignRider = async (req, res) => {
           orders_idorders: String(orderId),
           assignment_id: String(assignment._id),
         },
-        "delivery_assigned"
+        NOTIFICATION_TYPES.DELIVERY_ASSIGNED
       ),
       sendToUser(
         oldRiderId,
         "Delivery reassigned",
         `Order #${orderId} was reassigned to another rider.`,
         { orders_idorders: String(orderId) },
-        "delivery_reassigned"
+        NOTIFICATION_TYPES.DELIVERY_REASSIGNED
       ),
     ]).catch((e) => console.error("reassignRider notify failed:", e.message));
 
@@ -706,7 +707,7 @@ exports.suggestDeliveryRouteOrder = async (req, res) => {
     const rawStops = stopsFromOrders(orders);
     const manual = Array.isArray(stop_order) ? stop_order.map(Number) : null;
     const ordered = suggestStopOrder(origin, rawStops, manual);
-    const metrics = estimateRouteMetrics(origin, ordered);
+    const metrics = await estimateRouteMetricsAsync(origin, ordered);
 
     res.json({
       success: true,
@@ -721,8 +722,11 @@ exports.suggestDeliveryRouteOrder = async (req, res) => {
         })),
         estimated_duration_min: metrics.estimated_duration_min,
         estimated_distance_km: metrics.estimated_distance_km,
+        eta_source: metrics.eta_source,
+        polyline: metrics.polyline || [],
+        encoded_polyline: metrics.encoded_polyline,
         store_origin: origin,
-        maps_url: buildGoogleMapsDirectionsUrl(origin, ordered),
+        maps_url: metrics.maps_url || buildGoogleMapsDirectionsUrl(origin, ordered),
       },
     });
   } catch (err) {
@@ -757,7 +761,7 @@ exports.createDeliveryRoute = async (req, res) => {
     const rawStops = stopsFromOrders(orders);
     const manual = Array.isArray(stop_order) ? stop_order.map(Number) : null;
     const ordered = suggestStopOrder(origin, rawStops, manual);
-    const metrics = estimateRouteMetrics(origin, ordered);
+    const metrics = await estimateRouteMetricsAsync(origin, ordered);
 
     const deliveryDate = orders.find((o) => o.delivery_date)?.delivery_date || null;
     const deliverySlot = orders.find((o) => o.delivery_slot)?.delivery_slot || null;
@@ -815,7 +819,7 @@ exports.createDeliveryRoute = async (req, res) => {
         store_code: storeCode,
         stop_count: String(ordered.length),
       },
-      "delivery_route_assigned"
+      NOTIFICATION_TYPES.DELIVERY_ROUTE_ASSIGNED
     ).catch((e) => console.error("createDeliveryRoute notify failed:", e.message));
 
     const populated = await DeliveryRoute.findById(route._id)

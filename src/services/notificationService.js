@@ -1,8 +1,14 @@
 const { admin } = require("../config/firebase");
 const PickerUser = require("../models/PickerUser");
 const Notification = require("../models/Notification");
+const {
+  NOTIFICATION_TYPES,
+  NOTIFICATION_TYPE_CATALOG,
+  isValidNotificationType,
+} = require("../constants/notificationTypes");
 
-const sendToUser = async (userId, title, body, data = {}, type = "info") => {
+const sendToUser = async (userId, title, body, data = {}, type = NOTIFICATION_TYPES.INFO) => {
+  const resolvedType = isValidNotificationType(type) ? type : NOTIFICATION_TYPES.INFO;
   // 1. Persist an in-app notification record (always — even if FCM fails or
   //    the user has no token).
   try {
@@ -10,7 +16,7 @@ const sendToUser = async (userId, title, body, data = {}, type = "info") => {
       user_id: userId,
       title,
       body,
-      type,
+      type: resolvedType,
       metadata: data,
     });
   } catch (err) {
@@ -27,7 +33,7 @@ const sendToUser = async (userId, title, body, data = {}, type = "info") => {
     await admin.messaging().send({
       token: user.fcm_token,
       notification: { title, body },
-      data: { ...data, type },
+      data: { ...data, type: resolvedType },
       android: {
         notification: {
           channelId: "picker_orders_v2",
@@ -98,4 +104,9 @@ const notifyManagersOfNewOrder = async (order) => {
   );
 };
 
-module.exports = { sendToUser, notifyManagersOfNewOrder };
+module.exports = {
+  sendToUser,
+  notifyManagersOfNewOrder,
+  NOTIFICATION_TYPES,
+  NOTIFICATION_TYPE_CATALOG,
+};

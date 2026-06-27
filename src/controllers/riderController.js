@@ -12,6 +12,7 @@ const {
   onAssignmentFinished,
 } = require("../services/deliveryRouteService");
 const { notifyUpstreamDelivered } = require("../services/upstreamDeliveryService");
+const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 const {
   getStoreOrigin,
   buildGoogleMapsDirectionsUrl,
@@ -466,10 +467,10 @@ async function notifyManagersOfDeliveryEvent(assignment, event, rider, reason) {
           event,
         },
         event === "completed"
-          ? "delivery_completed"
+          ? NOTIFICATION_TYPES.DELIVERY_COMPLETED
           : event === "failed"
-            ? "delivery_failed"
-            : "delivery_started"
+            ? NOTIFICATION_TYPES.DELIVERY_FAILED
+            : NOTIFICATION_TYPES.DELIVERY_STARTED
       )
     )
   );

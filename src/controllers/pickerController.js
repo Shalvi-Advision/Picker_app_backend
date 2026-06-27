@@ -196,7 +196,7 @@ async function notifyManagersOfCompletedOrder(ordersIdorders, picker) {
           picker_name: picker.name || "",
           delivery_status: "ready_for_delivery",
         },
-        "delivery_ready"
+        require("../constants/notificationTypes").NOTIFICATION_TYPES.DELIVERY_READY
       )
     )
   );

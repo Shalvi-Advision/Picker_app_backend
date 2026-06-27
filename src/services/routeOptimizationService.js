@@ -61,14 +61,23 @@ function suggestStopOrder(origin, stops, manualOrder = null) {
 
 function estimateRouteMetrics(origin, orderedStops) {
   if (!orderedStops.length) {
-    return { estimated_distance_km: 0, estimated_duration_min: 0 };
+    return {
+      estimated_distance_km: 0,
+      estimated_duration_min: 0,
+      eta_source: "haversine",
+      polyline: [],
+      encoded_polyline: null,
+    };
   }
 
   let totalKm = 0;
   let prev = origin;
+  const polyline = [];
+  if (origin) polyline.push({ lat: origin.lat, lng: origin.lng });
   for (const stop of orderedStops) {
     const point = { lat: stop.lat, lng: stop.lng };
     if (prev) totalKm += haversineKm(prev, point);
+    polyline.push(point);
     prev = point;
   }
 
@@ -77,7 +86,18 @@ function estimateRouteMetrics(origin, orderedStops) {
   return {
     estimated_distance_km: Math.round(roadKm * 10) / 10,
     estimated_duration_min: durationMin,
+    eta_source: "haversine",
+    polyline,
+    encoded_polyline: null,
+    maps_url: buildGoogleMapsDirectionsUrl(origin, orderedStops),
   };
+}
+
+async function estimateRouteMetricsAsync(origin, orderedStops) {
+  const { getGoogleDirectionsMetrics } = require("./googleDirectionsService");
+  const google = await getGoogleDirectionsMetrics(origin, orderedStops);
+  if (google) return google;
+  return estimateRouteMetrics(origin, orderedStops);
 }
 
 function buildGoogleMapsDirectionsUrl(origin, orderedStops, riderPosition = null) {
@@ -132,6 +152,7 @@ module.exports = {
   haversineKm,
   suggestStopOrder,
   estimateRouteMetrics,
+  estimateRouteMetricsAsync,
   buildGoogleMapsDirectionsUrl,
   getStoreOrigin,
   stopsFromOrders,
