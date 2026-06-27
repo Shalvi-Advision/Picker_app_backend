@@ -392,7 +392,7 @@ async function buildRiderRoutePayload(route, riderId) {
     stops: route.stops
       .sort((a, b) => a.sequence - b.sequence)
       .map((s) => ({
-        ...s,
+        ...(s.toObject ? s.toObject() : s),
         order: ordersMap[s.orders_idorders] || null,
         assignment: assignMap[s.orders_idorders] || null,
       })),
