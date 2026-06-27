@@ -16,6 +16,7 @@ const {
   markNotificationRead,
   sendOrderToSuperAdmin,
   getRiders,
+  getRiderLocations,
   getRider,
   assignRider,
   reassignRider,
@@ -36,6 +37,7 @@ router.post(
 );
 router.get("/pickers", requireCapability("can_manage_pickers"), getPickers);
 router.get("/riders", requireCapability("can_view_riders"), getRiders);
+router.get("/riders/locations", requireCapability("can_view_riders"), getRiderLocations);
 router.get("/riders/:id", requireCapability("can_view_riders"), getRider);
 router.post(
   "/orders/:orders_idorders/assign-rider",

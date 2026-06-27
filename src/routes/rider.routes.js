@@ -11,6 +11,7 @@ const {
   completeDelivery,
   failDelivery,
   setMyAvailability,
+  updateMyLocation,
   getMyNotifications,
   markMyNotificationRead,
   getActiveRoute,
@@ -33,6 +34,7 @@ router.post(
   uploadPodPhoto
 );
 router.patch("/me/availability", requireCapability("can_set_rider_availability"), setMyAvailability);
+router.patch("/me/location", requireCapability("can_start_delivery"), updateMyLocation);
 router.get("/notifications", getMyNotifications);
 router.patch("/notifications/:id/read", markMyNotificationRead);
 

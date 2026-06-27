@@ -11,10 +11,19 @@ const {
   onAssignmentStarted,
   onAssignmentFinished,
 } = require("../services/deliveryRouteService");
+const { notifyUpstreamDelivered } = require("../services/upstreamDeliveryService");
 const {
   getStoreOrigin,
   buildGoogleMapsDirectionsUrl,
 } = require("../services/routeOptimizationService");
+
+function otpEnabled() {
+  return process.env.DELIVERY_OTP_ENABLED === "true";
+}
+
+function generateOtp() {
+  return String(Math.floor(1000 + Math.random() * 9000));
+}
 
 const podDir = path.join(__dirname, "../../public/uploads/pod");
 fs.mkdirSync(podDir, { recursive: true });
@@ -31,7 +40,9 @@ const podUpload = multer({
   storage: podStorage,
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype && file.mimetype.startsWith("image/")) return cb(null, true);
+    if (file.mimetype && (file.mimetype.startsWith("image/") || file.mimetype === "application/octet-stream")) {
+      return cb(null, true);
+    }
     cb(new Error("Only image uploads are allowed"));
   },
 });
@@ -94,7 +105,14 @@ exports.getDeliveryDetail = async (req, res) => {
     }
 
     const order = await Order.findOne({ orders_idorders: orderId });
-    res.json({ success: true, data: { assignment, order } });
+    res.json({
+      success: true,
+      data: {
+        assignment,
+        order,
+        otp_required: otpEnabled() && assignment.status === "out_for_delivery",
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -105,7 +123,11 @@ exports.startDelivery = async (req, res) => {
     const { id } = req.params;
     const assignment = await DeliveryAssignment.findOneAndUpdate(
       { _id: id, rider_id: req.user._id, status: "assigned" },
-      { status: "out_for_delivery", started_at: new Date() },
+      {
+        status: "out_for_delivery",
+        started_at: new Date(),
+        ...(otpEnabled() ? { delivery_otp: generateOtp() } : {}),
+      },
       { new: true }
     );
 
@@ -136,7 +158,8 @@ exports.startDelivery = async (req, res) => {
 exports.completeDelivery = async (req, res) => {
   try {
     const { id } = req.params;
-    const { photo_urls, notes, recipient_name, latitude, longitude } = req.body;
+    const { photo_urls, notes, recipient_name, latitude, longitude, signature_url, otp } =
+      req.body;
 
     const urls = Array.isArray(photo_urls)
       ? photo_urls.filter((u) => typeof u === "string" && u.trim())
@@ -161,16 +184,28 @@ exports.completeDelivery = async (req, res) => {
       });
     }
 
+    if (otpEnabled()) {
+      const code = String(otp || "").trim();
+      if (!code || code !== assignment.delivery_otp) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid delivery OTP — ask the customer for their code",
+        });
+      }
+    }
+
     assignment.status = "delivered";
     assignment.delivered_at = new Date();
     assignment.proof_of_delivery = {
       photo_urls: urls,
+      signature_url: signature_url?.trim() || null,
       notes: notes?.trim() || null,
       recipient_name: recipient_name?.trim() || null,
       latitude: latitude != null ? String(latitude) : null,
       longitude: longitude != null ? String(longitude) : null,
       captured_at: new Date(),
     };
+    assignment.delivery_otp = null;
     await assignment.save();
 
     await Order.updateOne(
@@ -179,6 +214,11 @@ exports.completeDelivery = async (req, res) => {
     );
 
     await onAssignmentFinished(assignment, "delivered");
+
+    const order = await Order.findOne({ orders_idorders: assignment.orders_idorders });
+    notifyUpstreamDelivered(order, assignment, req.user).catch((e) =>
+      console.error("notifyUpstreamDelivered failed:", e.message)
+    );
 
     notifyManagersOfDeliveryEvent(assignment, "completed", req.user).catch((e) =>
       console.error("notifyManagersOfDeliveryEvent failed:", e.message)
@@ -247,6 +287,35 @@ exports.setMyAvailability = async (req, res) => {
     }
 
     res.json({ success: true, data: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.updateMyLocation = async (req, res) => {
+  try {
+    const { latitude, longitude } = req.body;
+    if (latitude == null || longitude == null) {
+      return res.status(400).json({ success: false, message: "latitude and longitude are required" });
+    }
+
+    const updated = await PickerUser.findOneAndUpdate(
+      { _id: req.user._id, role: "rider" },
+      {
+        last_location: {
+          latitude: String(latitude),
+          longitude: String(longitude),
+          updated_at: new Date(),
+        },
+      },
+      { new: true }
+    ).select("-password");
+
+    if (!updated) {
+      return res.status(404).json({ success: false, message: "Rider not found" });
+    }
+
+    res.json({ success: true, data: updated.last_location });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

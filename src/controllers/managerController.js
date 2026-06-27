@@ -396,6 +396,47 @@ exports.getRiders = async (req, res) => {
   }
 };
 
+exports.getRiderLocations = async (req, res) => {
+  try {
+    const riders = await PickerUser.find({
+      role: "rider",
+      is_active: true,
+      store_codes: { $in: req.user.store_codes },
+    })
+      .select("name phone rider_availability store_codes last_location")
+      .lean();
+
+    const riderIds = riders.map((r) => r._id);
+    const activeAssignments = await DeliveryAssignment.find({
+      rider_id: { $in: riderIds },
+      status: { $in: ["assigned", "out_for_delivery"] },
+    }).lean();
+
+    const activeByRider = {};
+    for (const a of activeAssignments) {
+      const key = a.rider_id.toString();
+      if (!activeByRider[key]) activeByRider[key] = [];
+      activeByRider[key].push(a.orders_idorders);
+    }
+
+    const result = riders
+      .filter((r) => r.last_location?.latitude && r.last_location?.longitude)
+      .map((r) => ({
+        rider_id: r._id,
+        name: r.name,
+        phone: r.phone,
+        rider_availability: r.rider_availability,
+        store_codes: r.store_codes,
+        last_location: r.last_location,
+        active_orders: activeByRider[r._id.toString()] || [],
+      }));
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.getRider = async (req, res) => {
   try {
     const rider = await PickerUser.findOne({

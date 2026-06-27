@@ -31,6 +31,7 @@ const deliveryAssignmentSchema = new mongoose.Schema(
     started_at: { type: Date, default: null },
     delivered_at: { type: Date, default: null },
     failed_reason: { type: String, default: null },
+    delivery_otp: { type: String, default: null },
     proof_of_delivery: { type: proofOfDeliverySchema, default: () => ({}) },
     reassigned_from: { type: mongoose.Schema.Types.ObjectId, ref: "PickerUser", default: null },
     reassigned_at: { type: Date, default: null },

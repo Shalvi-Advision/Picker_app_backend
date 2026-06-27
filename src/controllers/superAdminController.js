@@ -3,6 +3,7 @@ const Order = require("../models/Order");
 const OrderItem = require("../models/OrderItem");
 const PickerAssignment = require("../models/PickerAssignment");
 const DeliveryAssignment = require("../models/DeliveryAssignment");
+const DeliveryRoute = require("../models/DeliveryRoute");
 const PickerItemStatus = require("../models/PickerItemStatus");
 const Notification = require("../models/Notification");
 const PickerUser = require("../models/PickerUser");
@@ -217,13 +218,108 @@ exports.getOrderDelivery = async (req, res) => {
 
     const deliveryAssignment = await DeliveryAssignment.findOne({ orders_idorders: orderId })
       .sort({ assigned_at: -1 })
-      .populate("rider_id", "name email phone rider_availability")
+      .populate("rider_id", "name email phone rider_availability last_location")
       .populate("assigned_by", "name email");
+
+    let route = null;
+    if (order.current_route_id) {
+      route = await DeliveryRoute.findById(order.current_route_id).lean();
+    }
 
     res.json({
       success: true,
-      data: { order, delivery_assignment: deliveryAssignment },
+      data: {
+        order,
+        delivery_assignment: deliveryAssignment,
+        delivery_route: route,
+        otp_enabled: process.env.DELIVERY_OTP_ENABLED === "true",
+      },
     });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.listDeliveries = async (req, res) => {
+  try {
+    const { delivery_status, store_code, delivery_date, delivery_slot, project_code } = req.query;
+    const filter = {
+      status: "completed",
+      delivery_status: { $nin: [null, ""] },
+    };
+
+    if (project_code) filter.project_code = project_code.toUpperCase();
+    if (store_code) filter.store_code = store_code.toUpperCase();
+    if (delivery_date) filter.delivery_date = delivery_date;
+    if (delivery_slot) filter.delivery_slot = delivery_slot;
+
+    if (delivery_status) {
+      const statusMap = { ready: "ready_for_delivery", out: "out_for_delivery" };
+      filter.delivery_status = statusMap[delivery_status] || delivery_status;
+    }
+
+    const orders = await Order.find(filter).sort({ updatedAt: -1 }).limit(500);
+    const orderIds = orders.map((o) => o.orders_idorders);
+
+    const deliveryAssignments = await DeliveryAssignment.find({
+      orders_idorders: { $in: orderIds },
+      status: { $ne: "cancelled" },
+    })
+      .sort({ assigned_at: -1 })
+      .populate("rider_id", "name email phone rider_availability last_location");
+
+    const deliveryMap = {};
+    for (const a of deliveryAssignments) {
+      if (!deliveryMap[a.orders_idorders]) deliveryMap[a.orders_idorders] = a;
+    }
+
+    const result = orders.map((o) => ({
+      ...o.toObject(),
+      current_delivery_assignment: deliveryMap[o.orders_idorders] || null,
+    }));
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getRiderLocations = async (req, res) => {
+  try {
+    const { store_code } = req.query;
+    const filter = { role: "rider", is_active: true };
+    if (store_code) filter.store_codes = store_code.toUpperCase();
+
+    const riders = await PickerUser.find(filter)
+      .select("name phone rider_availability store_codes last_location")
+      .lean();
+
+    const riderIds = riders.map((r) => r._id);
+    const activeAssignments = await DeliveryAssignment.find({
+      rider_id: { $in: riderIds },
+      status: { $in: ["assigned", "out_for_delivery"] },
+    }).lean();
+
+    const activeByRider = {};
+    for (const a of activeAssignments) {
+      const key = a.rider_id.toString();
+      if (!activeByRider[key]) activeByRider[key] = [];
+      activeByRider[key].push(a.orders_idorders);
+    }
+
+    const result = riders
+      .filter((r) => r.last_location?.latitude && r.last_location?.longitude)
+      .map((r) => ({
+        rider_id: r._id,
+        name: r.name,
+        phone: r.phone,
+        rider_availability: r.rider_availability,
+        store_codes: r.store_codes,
+        last_location: r.last_location,
+        active_orders: activeByRider[r._id.toString()] || [],
+      }));
+
+    res.json({ success: true, data: result });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

@@ -27,6 +27,11 @@ const pickerUserSchema = new mongoose.Schema(
     // (force-deny). Absent keys fall back to the role default. Does NOT gate
     // login — permissions only.
     capability_overrides: { type: Map, of: Boolean, default: {} },
+    last_location: {
+      latitude: { type: String, default: null },
+      longitude: { type: String, default: null },
+      updated_at: { type: Date, default: null },
+    },
   },
   { timestamps: true }
 );
