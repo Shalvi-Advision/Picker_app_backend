@@ -1,6 +1,7 @@
 const Order = require("../models/Order");
 const OrderItem = require("../models/OrderItem");
 const PickerAssignment = require("../models/PickerAssignment");
+const { assignRiderToOrder } = require("../services/deliveryAssignmentService");
 const DeliveryAssignment = require("../models/DeliveryAssignment");
 const DeliveryRoute = require("../models/DeliveryRoute");
 const PickerItemStatus = require("../models/PickerItemStatus");
@@ -473,12 +474,6 @@ exports.getRider = async (req, res) => {
 exports.assignRider = async (req, res) => {
   try {
     const orderId = Number(req.params.orders_idorders);
-    const { rider_id } = req.body;
-
-    if (!rider_id) {
-      return res.status(400).json({ success: false, message: "rider_id is required" });
-    }
-
     const order = await Order.findOne({ orders_idorders: orderId });
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
@@ -486,74 +481,22 @@ exports.assignRider = async (req, res) => {
     if (!req.user.store_codes.includes(order.store_code)) {
       return res.status(403).json({ success: false, message: "Order is outside your stores" });
     }
-    if (order.status !== "completed") {
-      return res
-        .status(400)
-        .json({ success: false, message: "Only picked/completed orders can be assigned for delivery" });
-    }
-    if (order.delivery_status && !["ready_for_delivery", "failed", "cancelled"].includes(order.delivery_status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Order delivery status is "${order.delivery_status}" — cannot assign rider`,
-      });
+
+    if (!req.body.rider_id) {
+      return res.status(400).json({ success: false, message: "rider_id is required" });
     }
 
-    const activeDelivery = await DeliveryAssignment.findOne({
+    const result = await assignRiderToOrder({
       orders_idorders: orderId,
-      status: { $in: ["assigned", "out_for_delivery"] },
-    });
-    if (activeDelivery) {
-      return res.status(409).json({
-        success: false,
-        message: "Order already has an active delivery assignment",
-      });
-    }
-
-    const rider = await PickerUser.findOne({
-      _id: rider_id,
-      role: "rider",
-      is_active: true,
-      store_codes: order.store_code,
-    });
-    if (!rider) {
-      return res.status(404).json({ success: false, message: "Rider not found for this store" });
-    }
-
-    const assignment = await DeliveryAssignment.create({
-      orders_idorders: orderId,
-      store_code: order.store_code,
-      project_code: order.project_code,
-      rider_id: rider._id,
+      rider_id: req.body.rider_id,
       assigned_by: req.user._id,
-      status: "assigned",
     });
 
-    await Order.updateOne(
-      { orders_idorders: orderId },
-      {
-        delivery_status: "assigned",
-        current_delivery_assignment_id: assignment._id,
-      }
-    );
+    if (result.error) {
+      return res.status(result.status || 400).json({ success: false, message: result.error });
+    }
 
-    sendToUser(
-      rider._id,
-      "New delivery assigned",
-      `Order #${orderId} (${order.store_code}) assigned to you.`,
-      {
-        orders_idorders: String(orderId),
-        store_code: order.store_code,
-        assignment_id: String(assignment._id),
-      },
-      NOTIFICATION_TYPES.DELIVERY_ASSIGNED
-    ).catch((e) => console.error("assignRider notify failed:", e.message));
-
-    const populated = await DeliveryAssignment.findById(assignment._id).populate(
-      "rider_id",
-      "name email phone rider_availability"
-    );
-
-    res.status(201).json({ success: true, data: populated });
+    res.status(201).json({ success: true, data: result.assignment });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

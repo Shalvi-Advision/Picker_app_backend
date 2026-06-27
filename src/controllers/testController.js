@@ -1,6 +1,7 @@
 const Order = require("../models/Order");
 const OrderItem = require("../models/OrderItem");
 const PickerUser = require("../models/PickerUser");
+const { assignRiderToOrder } = require("../services/deliveryAssignmentService");
 const { notifyManagersOfNewOrder } = require("../services/notificationService");
 const { admin } = require("../config/firebase");
 
@@ -285,6 +286,89 @@ exports.testPushToUser = async (req, res) => {
       error_code: e.code || "unknown",
       error_message: e.message,
     });
+  }
+};
+
+/**
+ * GET /api/test/riders
+ * List active riders (optionally filter by store_code / project_code). No auth.
+ */
+exports.listTestRiders = async (req, res) => {
+  try {
+    const storeCode = req.query.store_code
+      ? String(req.query.store_code).toUpperCase()
+      : null;
+    const projectCode = req.query.project_code
+      ? String(req.query.project_code).toUpperCase()
+      : null;
+
+    const filter = { role: "rider", is_active: true };
+    if (storeCode) filter.store_codes = storeCode;
+    if (projectCode) filter.project_code = projectCode;
+
+    const riders = await PickerUser.find(filter)
+      .select("name email phone store_codes project_code rider_availability")
+      .sort({ name: 1 })
+      .lean();
+
+    res.json({ success: true, data: riders });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * POST /api/test/assign-rider
+ * Dev shortcut: assign a rider to an order in one call. No auth.
+ *
+ * Body:
+ *   orders_idorders (required)
+ *   rider_id OR rider_email (required)
+ *   prepare_order (optional) — mark order completed + ready_for_delivery
+ *   replace_active (optional) — cancel any active delivery assignment first
+ *   latitude, longitude (optional) — set on order when prepare_order is true
+ */
+exports.testAssignRider = async (req, res) => {
+  try {
+    const { orders_idorders, rider_id, rider_email, prepare_order, replace_active, latitude, longitude } =
+      req.body;
+
+    if (!orders_idorders) {
+      return res.status(400).json({ success: false, message: "orders_idorders is required" });
+    }
+    if (!rider_id && !rider_email) {
+      return res.status(400).json({
+        success: false,
+        message: "rider_id or rider_email is required",
+      });
+    }
+
+    const result = await assignRiderToOrder({
+      orders_idorders,
+      rider_id,
+      rider_email,
+      prepare_order: !!prepare_order,
+      replace_active: !!replace_active,
+      latitude,
+      longitude,
+    });
+
+    if (result.error) {
+      return res.status(result.status || 400).json({ success: false, message: result.error });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `Rider assigned to order #${orders_idorders}`,
+      data: {
+        assignment: result.assignment,
+        rider: result.rider,
+        order: result.order,
+      },
+    });
+  } catch (err) {
+    console.error("testAssignRider failed:", err);
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
