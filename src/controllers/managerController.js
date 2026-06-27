@@ -2,12 +2,22 @@ const Order = require("../models/Order");
 const OrderItem = require("../models/OrderItem");
 const PickerAssignment = require("../models/PickerAssignment");
 const DeliveryAssignment = require("../models/DeliveryAssignment");
+const DeliveryRoute = require("../models/DeliveryRoute");
 const PickerItemStatus = require("../models/PickerItemStatus");
 const PickerEscalation = require("../models/PickerEscalation");
 const PickerUser = require("../models/PickerUser");
 const Notification = require("../models/Notification");
 const { reassignOrder } = require("../services/roundRobinService");
 const { sendToUser } = require("../services/notificationService");
+const {
+  MIN_STOPS,
+  MAX_STOPS,
+  suggestStopOrder,
+  estimateRouteMetrics,
+  getStoreOrigin,
+  stopsFromOrders,
+  buildGoogleMapsDirectionsUrl,
+} = require("../services/routeOptimizationService");
 
 // Fetch all order_items for the given order IDs in one query and group them by
 // orders_idorders, attaching each item's picker_status so embedded items match
@@ -591,6 +601,260 @@ exports.reassignRider = async (req, res) => {
     );
 
     res.json({ success: true, data: populated });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+async function validateOrdersForRoute(orderIds, managerStoreCodes) {
+  if (!Array.isArray(orderIds) || orderIds.length < MIN_STOPS || orderIds.length > MAX_STOPS) {
+    return {
+      error: `Select between ${MIN_STOPS} and ${MAX_STOPS} orders for a route`,
+    };
+  }
+
+  const ids = orderIds.map(Number);
+  const orders = await Order.find({ orders_idorders: { $in: ids } }).lean();
+  if (orders.length !== ids.length) {
+    return { error: "One or more orders not found" };
+  }
+
+  const storeCode = orders[0].store_code;
+  const projectCode = orders[0].project_code;
+
+  for (const o of orders) {
+    if (!managerStoreCodes.includes(o.store_code)) {
+      return { error: `Order #${o.orders_idorders} is outside your stores` };
+    }
+    if (o.store_code !== storeCode || o.project_code !== projectCode) {
+      return { error: "All orders must be from the same store and project" };
+    }
+    if (o.status !== "completed") {
+      return { error: `Order #${o.orders_idorders} is not picked yet` };
+    }
+    if (o.delivery_status && !["ready_for_delivery", "failed", "cancelled"].includes(o.delivery_status)) {
+      return {
+        error: `Order #${o.orders_idorders} delivery status is "${o.delivery_status}" — not available for routing`,
+      };
+    }
+  }
+
+  const active = await DeliveryAssignment.find({
+    orders_idorders: { $in: ids },
+    status: { $in: ["assigned", "out_for_delivery"] },
+  }).lean();
+  if (active.length) {
+    return {
+      error: `Order #${active[0].orders_idorders} already has an active delivery assignment`,
+    };
+  }
+
+  return { orders, storeCode, projectCode };
+}
+
+exports.suggestDeliveryRouteOrder = async (req, res) => {
+  try {
+    const { orders_idorders, stop_order } = req.body;
+    const validated = await validateOrdersForRoute(orders_idorders, req.user.store_codes);
+    if (validated.error) {
+      return res.status(400).json({ success: false, message: validated.error });
+    }
+
+    const { orders, storeCode, projectCode } = validated;
+    const origin = await getStoreOrigin(projectCode, storeCode);
+    const rawStops = stopsFromOrders(orders);
+    const manual = Array.isArray(stop_order) ? stop_order.map(Number) : null;
+    const ordered = suggestStopOrder(origin, rawStops, manual);
+    const metrics = estimateRouteMetrics(origin, ordered);
+
+    res.json({
+      success: true,
+      data: {
+        stop_order: ordered.map((s) => s.orders_idorders),
+        stops: ordered.map((s, i) => ({
+          sequence: i + 1,
+          orders_idorders: s.orders_idorders,
+          latitude: s.latitude,
+          longitude: s.longitude,
+          delivery_details: s.delivery_details,
+        })),
+        estimated_duration_min: metrics.estimated_duration_min,
+        estimated_distance_km: metrics.estimated_distance_km,
+        store_origin: origin,
+        maps_url: buildGoogleMapsDirectionsUrl(origin, ordered),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.createDeliveryRoute = async (req, res) => {
+  try {
+    const { orders_idorders, rider_id, stop_order } = req.body;
+    if (!rider_id) {
+      return res.status(400).json({ success: false, message: "rider_id is required" });
+    }
+
+    const validated = await validateOrdersForRoute(orders_idorders, req.user.store_codes);
+    if (validated.error) {
+      return res.status(400).json({ success: false, message: validated.error });
+    }
+
+    const { orders, storeCode, projectCode } = validated;
+    const rider = await PickerUser.findOne({
+      _id: rider_id,
+      role: "rider",
+      is_active: true,
+      store_codes: storeCode,
+    });
+    if (!rider) {
+      return res.status(404).json({ success: false, message: "Rider not found for this store" });
+    }
+
+    const origin = await getStoreOrigin(projectCode, storeCode);
+    const rawStops = stopsFromOrders(orders);
+    const manual = Array.isArray(stop_order) ? stop_order.map(Number) : null;
+    const ordered = suggestStopOrder(origin, rawStops, manual);
+    const metrics = estimateRouteMetrics(origin, ordered);
+
+    const deliveryDate = orders.find((o) => o.delivery_date)?.delivery_date || null;
+    const deliverySlot = orders.find((o) => o.delivery_slot)?.delivery_slot || null;
+
+    const route = await DeliveryRoute.create({
+      store_code: storeCode,
+      project_code: projectCode,
+      rider_id: rider._id,
+      assigned_by: req.user._id,
+      delivery_date: deliveryDate,
+      delivery_slot: deliverySlot,
+      status: "planned",
+      stops: ordered.map((s, i) => ({
+        sequence: i + 1,
+        orders_idorders: s.orders_idorders,
+        latitude: s.latitude,
+        longitude: s.longitude,
+        status: "pending",
+      })),
+      estimated_duration_min: metrics.estimated_duration_min,
+      estimated_distance_km: metrics.estimated_distance_km,
+    });
+
+    const assignments = [];
+    for (let i = 0; i < ordered.length; i++) {
+      const stop = ordered[i];
+      const assignment = await DeliveryAssignment.create({
+        orders_idorders: stop.orders_idorders,
+        store_code: storeCode,
+        project_code: projectCode,
+        rider_id: rider._id,
+        assigned_by: req.user._id,
+        route_id: route._id,
+        stop_sequence: i + 1,
+        status: "assigned",
+      });
+      assignments.push(assignment);
+
+      await Order.updateOne(
+        { orders_idorders: stop.orders_idorders },
+        {
+          delivery_status: "assigned",
+          current_delivery_assignment_id: assignment._id,
+          current_route_id: route._id,
+        }
+      );
+    }
+
+    sendToUser(
+      rider._id,
+      "New delivery route assigned",
+      `Route with ${ordered.length} stops (${storeCode}) assigned to you.`,
+      {
+        route_id: String(route._id),
+        store_code: storeCode,
+        stop_count: String(ordered.length),
+      },
+      "delivery_route_assigned"
+    ).catch((e) => console.error("createDeliveryRoute notify failed:", e.message));
+
+    const populated = await DeliveryRoute.findById(route._id)
+      .populate("rider_id", "name email phone rider_availability")
+      .lean();
+
+    res.status(201).json({
+      success: true,
+      data: {
+        route: populated,
+        assignments,
+        maps_url: buildGoogleMapsDirectionsUrl(origin, ordered),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getDeliveryRoutes = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const filter = { store_code: { $in: req.user.store_codes } };
+    if (status) filter.status = status;
+
+    const routes = await DeliveryRoute.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .populate("rider_id", "name email phone rider_availability")
+      .lean();
+
+    res.json({ success: true, data: routes });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getDeliveryRoute = async (req, res) => {
+  try {
+    const route = await DeliveryRoute.findById(req.params.id)
+      .populate("rider_id", "name email phone rider_availability")
+      .lean();
+
+    if (!route) {
+      return res.status(404).json({ success: false, message: "Route not found" });
+    }
+    if (!req.user.store_codes.includes(route.store_code)) {
+      return res.status(403).json({ success: false, message: "Route is outside your stores" });
+    }
+
+    const orderIds = route.stops.map((s) => s.orders_idorders);
+    const [orders, assignments] = await Promise.all([
+      Order.find({ orders_idorders: { $in: orderIds } }).lean(),
+      DeliveryAssignment.find({ route_id: route._id }).lean(),
+    ]);
+    const ordersMap = Object.fromEntries(orders.map((o) => [o.orders_idorders, o]));
+    const assignMap = Object.fromEntries(assignments.map((a) => [a.orders_idorders, a]));
+
+    const origin = await getStoreOrigin(route.project_code, route.store_code);
+    const coordStops = route.stops
+      .map((s) => {
+        const c = parseFloat(s.latitude);
+        const lo = parseFloat(s.longitude);
+        if (!Number.isFinite(c) || !Number.isFinite(lo)) return null;
+        return { lat: c, lng: lo };
+      })
+      .filter(Boolean);
+
+    res.json({
+      success: true,
+      data: {
+        ...route,
+        stops: route.stops.map((s) => ({
+          ...s,
+          order: ordersMap[s.orders_idorders] || null,
+          assignment: assignMap[s.orders_idorders] || null,
+        })),
+        maps_url: buildGoogleMapsDirectionsUrl(origin, coordStops),
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

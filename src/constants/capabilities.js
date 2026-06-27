@@ -43,6 +43,7 @@ const CAPABILITIES = [
   { key: "can_assign_rider", label: "Assign rider to order", group: "Delivery management", kind: "write", applies_to: ["manager"] },
   { key: "can_reassign_rider", label: "Reassign delivery", group: "Delivery management", kind: "write", applies_to: ["manager"] },
   { key: "can_view_delivery_status", label: "View delivery status on orders", group: "Delivery management", kind: "read", applies_to: ["manager"] },
+  { key: "can_create_delivery_route", label: "Create batched delivery routes", group: "Delivery management", kind: "write", applies_to: ["manager"] },
 
   // Visibility
   { key: "can_view_orders", label: "View orders list", group: "Visibility", kind: "read", applies_to: ["picker", "manager", "admin"] },
@@ -59,6 +60,7 @@ const FALSE_DELIVERY_MANAGER = {
   can_assign_rider: false,
   can_reassign_rider: false,
   can_view_delivery_status: false,
+  can_create_delivery_route: false,
 };
 
 const FALSE_DELIVERY_RIDER = {
@@ -108,6 +110,7 @@ const DEFAULT_ROLE_CAPABILITIES = {
     can_assign_rider: true,
     can_reassign_rider: true,
     can_view_delivery_status: true,
+    can_create_delivery_route: true,
     can_view_deliveries_admin: false,
     can_start_picking: false,
     can_pick_items: false,

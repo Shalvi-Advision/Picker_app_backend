@@ -38,6 +38,11 @@ const orderSchema = new mongoose.Schema(
       ref: "DeliveryAssignment",
       default: null,
     },
+    current_route_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "DeliveryRoute",
+      default: null,
+    },
     synced_at: { type: Date, default: Date.now },
   },
   { timestamps: true }

@@ -2,10 +2,19 @@ const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
 const DeliveryAssignment = require("../models/DeliveryAssignment");
+const DeliveryRoute = require("../models/DeliveryRoute");
 const Order = require("../models/Order");
 const PickerUser = require("../models/PickerUser");
 const Notification = require("../models/Notification");
 const { sendToUser } = require("../services/notificationService");
+const {
+  onAssignmentStarted,
+  onAssignmentFinished,
+} = require("../services/deliveryRouteService");
+const {
+  getStoreOrigin,
+  buildGoogleMapsDirectionsUrl,
+} = require("../services/routeOptimizationService");
 
 const podDir = path.join(__dirname, "../../public/uploads/pod");
 fs.mkdirSync(podDir, { recursive: true });
@@ -112,6 +121,8 @@ exports.startDelivery = async (req, res) => {
       { delivery_status: "out_for_delivery" }
     );
 
+    await onAssignmentStarted(assignment);
+
     notifyManagersOfDeliveryEvent(assignment, "started", req.user).catch((e) =>
       console.error("notifyManagersOfDeliveryEvent failed:", e.message)
     );
@@ -167,6 +178,8 @@ exports.completeDelivery = async (req, res) => {
       { delivery_status: "delivered" }
     );
 
+    await onAssignmentFinished(assignment, "delivered");
+
     notifyManagersOfDeliveryEvent(assignment, "completed", req.user).catch((e) =>
       console.error("notifyManagersOfDeliveryEvent failed:", e.message)
     );
@@ -203,6 +216,8 @@ exports.failDelivery = async (req, res) => {
       { orders_idorders: assignment.orders_idorders },
       { delivery_status: "failed" }
     );
+
+    await onAssignmentFinished(assignment, "failed");
 
     notifyManagersOfDeliveryEvent(assignment, "failed", req.user, reason).catch((e) =>
       console.error("notifyManagersOfDeliveryEvent failed:", e.message)
@@ -267,6 +282,83 @@ exports.markMyNotificationRead = async (req, res) => {
     );
     if (!n) return res.status(404).json({ success: false, message: "Notification not found" });
     res.json({ success: true, data: n });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+async function buildRiderRoutePayload(route, riderId) {
+  const orderIds = route.stops.map((s) => s.orders_idorders);
+  const [orders, assignments] = await Promise.all([
+    Order.find({ orders_idorders: { $in: orderIds } }).lean(),
+    DeliveryAssignment.find({ route_id: route._id, rider_id: riderId }).lean(),
+  ]);
+  const ordersMap = Object.fromEntries(orders.map((o) => [o.orders_idorders, o]));
+  const assignMap = Object.fromEntries(assignments.map((a) => [a.orders_idorders, a]));
+
+  const origin = await getStoreOrigin(route.project_code, route.store_code);
+  const coordStops = route.stops
+    .sort((a, b) => a.sequence - b.sequence)
+    .map((s) => {
+      const c = parseFloat(s.latitude);
+      const lo = parseFloat(s.longitude);
+      if (!Number.isFinite(c) || !Number.isFinite(lo)) return null;
+      return { lat: c, lng: lo };
+    })
+    .filter(Boolean);
+
+  const pendingCount = route.stops.filter((s) => s.status === "pending").length;
+  const currentStop = route.stops
+    .sort((a, b) => a.sequence - b.sequence)
+    .find((s) => s.status === "pending");
+
+  return {
+    ...route.toObject ? route.toObject() : route,
+    stops: route.stops
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((s) => ({
+        ...s,
+        order: ordersMap[s.orders_idorders] || null,
+        assignment: assignMap[s.orders_idorders] || null,
+      })),
+    pending_stops: pendingCount,
+    current_stop: currentStop || null,
+    maps_url: buildGoogleMapsDirectionsUrl(origin, coordStops),
+    store_origin: origin,
+  };
+}
+
+exports.getActiveRoute = async (req, res) => {
+  try {
+    const route = await DeliveryRoute.findOne({
+      rider_id: req.user._id,
+      status: { $in: ["planned", "in_progress"] },
+    }).sort({ createdAt: -1 });
+
+    if (!route) {
+      return res.json({ success: true, data: null });
+    }
+
+    const data = await buildRiderRoutePayload(route, req.user._id);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getRoute = async (req, res) => {
+  try {
+    const route = await DeliveryRoute.findOne({
+      _id: req.params.id,
+      rider_id: req.user._id,
+    });
+
+    if (!route) {
+      return res.status(404).json({ success: false, message: "Route not found" });
+    }
+
+    const data = await buildRiderRoutePayload(route, req.user._id);
+    res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

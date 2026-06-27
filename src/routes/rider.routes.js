@@ -13,11 +13,15 @@ const {
   setMyAvailability,
   getMyNotifications,
   markMyNotificationRead,
+  getActiveRoute,
+  getRoute,
 } = require("../controllers/riderController");
 
 router.use(auth, roleGuard("rider"));
 
 router.get("/deliveries", requireCapability("can_view_deliveries"), getMyDeliveries);
+router.get("/routes/active", requireCapability("can_view_deliveries"), getActiveRoute);
+router.get("/routes/:id", requireCapability("can_view_deliveries"), getRoute);
 router.get("/deliveries/:orders_idorders", requireCapability("can_view_deliveries"), getDeliveryDetail);
 router.post("/deliveries/:id/start", requireCapability("can_start_delivery"), startDelivery);
 router.post("/deliveries/:id/complete", requireCapability("can_complete_delivery"), completeDelivery);

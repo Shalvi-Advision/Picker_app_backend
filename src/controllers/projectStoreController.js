@@ -11,7 +11,13 @@ exports.listProjectStores = async (_req, res) => {
     const map = {};
     for (const row of rows) {
       if (!map[row.project_code]) map[row.project_code] = { project_code: row.project_code, stores: [] };
-      map[row.project_code].stores.push({ store_code: row.store_code, _id: row._id });
+      map[row.project_code].stores.push({
+        _id: row._id,
+        store_code: row.store_code,
+        latitude: row.latitude,
+        longitude: row.longitude,
+        address: row.address,
+      });
     }
 
     // Attach user counts per (project_code, store_code) in one query
@@ -35,6 +41,9 @@ exports.listProjectStores = async (_req, res) => {
       stores: proj.stores.map((s) => ({
         _id: s._id,
         store_code: s.store_code,
+        latitude: s.latitude ?? null,
+        longitude: s.longitude ?? null,
+        address: s.address ?? null,
         user_count: counts[`${proj.project_code}||${s.store_code}`] || 0,
       })),
     }));
@@ -73,6 +82,29 @@ exports.deleteProjectStore = async (req, res) => {
     const doc = await ProjectStore.findByIdAndDelete(id);
     if (!doc) return res.status(404).json({ success: false, message: "Mapping not found" });
     res.json({ success: true, message: "Mapping deleted" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// PATCH /super-admin/project-stores/:id
+// Body: { latitude?, longitude?, address? }
+exports.updateProjectStore = async (req, res) => {
+  try {
+    const { latitude, longitude, address } = req.body;
+    const updates = {};
+    if (latitude !== undefined) updates.latitude = latitude ? String(latitude).trim() : null;
+    if (longitude !== undefined) updates.longitude = longitude ? String(longitude).trim() : null;
+    if (address !== undefined) updates.address = address ? String(address).trim() : null;
+
+    const doc = await ProjectStore.findByIdAndUpdate(req.params.id, updates, {
+      new: true,
+      runValidators: true,
+    });
+    if (!doc) {
+      return res.status(404).json({ success: false, message: "Mapping not found" });
+    }
+    res.json({ success: true, data: doc });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

@@ -27,6 +27,7 @@ const {
 const {
   listProjectStores,
   createProjectStore,
+  updateProjectStore,
   deleteProjectStore,
   getStoreUsers,
 } = require("../controllers/projectStoreController");
@@ -61,6 +62,7 @@ router.patch("/roles/:role/capabilities", ownerOnly, updateRoleCapabilities);
 // Project → store code mappings.
 router.get("/project-stores", ownerOnly, listProjectStores);
 router.post("/project-stores", ownerOnly, createProjectStore);
+router.patch("/project-stores/:id", ownerOnly, updateProjectStore);
 router.delete("/project-stores/:id", ownerOnly, deleteProjectStore);
 router.get("/project-stores/:project_code/stores/:store_code/users", ownerOnly, getStoreUsers);
 

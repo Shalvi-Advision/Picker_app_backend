@@ -19,6 +19,10 @@ const {
   getRider,
   assignRider,
   reassignRider,
+  suggestDeliveryRouteOrder,
+  createDeliveryRoute,
+  getDeliveryRoutes,
+  getDeliveryRoute,
 } = require("../controllers/managerController");
 
 router.use(auth, roleGuard("manager"));
@@ -39,6 +43,26 @@ router.post(
   assignRider
 );
 router.post("/deliveries/reassign", requireCapability("can_reassign_rider"), reassignRider);
+router.post(
+  "/delivery-routes/suggest-order",
+  requireCapability("can_create_delivery_route"),
+  suggestDeliveryRouteOrder
+);
+router.post(
+  "/delivery-routes",
+  requireCapability("can_create_delivery_route"),
+  createDeliveryRoute
+);
+router.get(
+  "/delivery-routes",
+  requireCapability("can_view_delivery_status"),
+  getDeliveryRoutes
+);
+router.get(
+  "/delivery-routes/:id",
+  requireCapability("can_view_delivery_status"),
+  getDeliveryRoute
+);
 router.post("/reassign", requireCapability("can_reassign"), reassignOrder);
 router.get("/remarks", requireCapability("can_view_remarks"), getAllRemarks);
 router.post("/escalations", requireCapability("can_escalate"), createEscalation);
