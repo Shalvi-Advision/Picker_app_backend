@@ -111,6 +111,13 @@ exports.createTestOrder = async (req, res) => {
       .toISOString()
       .slice(0, 10);
 
+    const defaultLat = "19.0760";
+    const defaultLng = "72.8777";
+    const orderLatitude =
+      req.body.latitude != null ? String(req.body.latitude) : defaultLat;
+    const orderLongitude =
+      req.body.longitude != null ? String(req.body.longitude) : defaultLng;
+
     // Pick N random distinct products from the catalog (Fisher–Yates partial shuffle)
     const pool = [...SAMPLE_PRODUCTS];
     for (let i = pool.length - 1; i > pool.length - 1 - itemCount; i--) {
@@ -136,6 +143,9 @@ exports.createTestOrder = async (req, res) => {
       project_code: projectCode,
       order_date: orderDate,
       delivery_date: deliveryDate,
+      delivery_details: req.body.delivery_details || "Test delivery address",
+      latitude: orderLatitude,
+      longitude: orderLongitude,
       total_items: totalItems,
       total_amount: Math.round(totalAmount * 100) / 100,
       status: "pending",

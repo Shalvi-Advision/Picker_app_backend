@@ -46,7 +46,9 @@ async function assignRiderToOrder({
       delivery_status: "ready_for_delivery",
     };
     if (latitude != null) orderUpdate.latitude = String(latitude);
+    else if (!order.latitude) orderUpdate.latitude = "19.0760";
     if (longitude != null) orderUpdate.longitude = String(longitude);
+    else if (!order.longitude) orderUpdate.longitude = "72.8777";
     await Order.updateOne({ orders_idorders: orderId }, orderUpdate);
     Object.assign(order, orderUpdate);
   }
