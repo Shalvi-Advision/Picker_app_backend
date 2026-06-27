@@ -3,7 +3,7 @@ const { buildOsmDirectionsUrl } = require("../utils/osmUrls");
 
 const ROAD_FACTOR = 1.3;
 const AVG_SPEED_KMH = 25;
-const MAX_STOPS = 4;
+const MAX_STOPS = 15;
 const MIN_STOPS = 2;
 
 function parseCoord(lat, lng) {

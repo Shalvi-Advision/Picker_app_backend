@@ -16,6 +16,11 @@ const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 const {
   getStoreOrigin,
   buildOsmDirectionsUrl,
+  suggestStopOrder,
+  estimateRouteMetricsAsync,
+  stopsFromOrders,
+  parseCoord,
+  MAX_STOPS,
 } = require("../services/routeOptimizationService");
 
 function otpEnabled() {
@@ -475,3 +480,105 @@ async function notifyManagersOfDeliveryEvent(assignment, event, rider, reason) {
     )
   );
 }
+
+/**
+ * Rider taps "Start day's route": gather all of this rider's pending deliveries
+ * and build ONE fuel/time-efficient route, optimized from the rider's live GPS
+ * (falls back to the store origin). If an active route already exists it is
+ * returned as-is (idempotent). Optional body: { latitude, longitude }.
+ */
+exports.startMyRoute = async (req, res) => {
+  try {
+    const riderId = req.user._id;
+
+    // Already have a route in progress? Return it instead of rebuilding.
+    const existing = await DeliveryRoute.findOne({
+      rider_id: riderId,
+      status: { $in: ["planned", "in_progress"] },
+    }).sort({ createdAt: -1 });
+    if (existing) {
+      const data = await buildRiderRoutePayload(existing, riderId);
+      return res.json({ success: true, data, already_active: true });
+    }
+
+    // Collect this rider's unrouted, ready-to-go orders.
+    const pending = await DeliveryAssignment.find({
+      rider_id: riderId,
+      status: "assigned",
+      route_id: { $in: [null, undefined] },
+    }).lean();
+
+    if (!pending.length) {
+      return res.status(400).json({
+        success: false,
+        message: "No deliveries waiting to be routed",
+      });
+    }
+
+    const ids = pending.map((a) => a.orders_idorders);
+    const orders = await Order.find({ orders_idorders: { $in: ids } }).lean();
+    if (!orders.length) {
+      return res.status(400).json({ success: false, message: "Orders not found for your deliveries" });
+    }
+
+    // One route is per store/project; group by the most common store.
+    const storeCode = orders[0].store_code;
+    const projectCode = orders[0].project_code;
+    const sameStore = orders.filter(
+      (o) => o.store_code === storeCode && o.project_code === projectCode
+    );
+
+    // Origin: rider's live position if sent, else store coordinates.
+    const riderPos = parseCoord(req.body?.latitude, req.body?.longitude);
+    const storeOrigin = await getStoreOrigin(projectCode, storeCode);
+    const origin = riderPos || storeOrigin;
+
+    // Optimize from origin (nearest-neighbor), capped at MAX_STOPS.
+    const rawStops = stopsFromOrders(sameStore);
+    const ordered = suggestStopOrder(origin, rawStops).slice(0, MAX_STOPS);
+    const metrics = await estimateRouteMetricsAsync(origin, ordered);
+
+    const deliveryDate = sameStore.find((o) => o.delivery_date)?.delivery_date || null;
+    const deliverySlot = sameStore.find((o) => o.delivery_slot)?.delivery_slot || null;
+
+    const route = await DeliveryRoute.create({
+      store_code: storeCode,
+      project_code: projectCode,
+      rider_id: riderId,
+      assigned_by: riderId,
+      delivery_date: deliveryDate,
+      delivery_slot: deliverySlot,
+      status: "planned",
+      stops: ordered.map((s, i) => ({
+        sequence: i + 1,
+        orders_idorders: s.orders_idorders,
+        latitude: s.latitude,
+        longitude: s.longitude,
+        status: "pending",
+      })),
+      estimated_duration_min: metrics.estimated_duration_min,
+      estimated_distance_km: metrics.estimated_distance_km,
+    });
+
+    // Link the existing assignments to this route in their optimized sequence.
+    const assignByOrder = Object.fromEntries(pending.map((a) => [a.orders_idorders, a]));
+    for (let i = 0; i < ordered.length; i++) {
+      const stop = ordered[i];
+      const a = assignByOrder[stop.orders_idorders];
+      if (!a) continue;
+      await DeliveryAssignment.updateOne(
+        { _id: a._id },
+        { route_id: route._id, stop_sequence: i + 1 }
+      );
+      await Order.updateOne(
+        { orders_idorders: stop.orders_idorders },
+        { current_route_id: route._id }
+      );
+    }
+
+    const data = await buildRiderRoutePayload(route, riderId);
+    res.status(201).json({ success: true, data, already_active: false });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
