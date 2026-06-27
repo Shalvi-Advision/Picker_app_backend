@@ -38,7 +38,8 @@ exports.login = async (req, res) => {
 
     // admin (mobile top-of-hierarchy) bypasses project/store checks like the old super_admin did.
     // picker and manager remain store-scoped.
-    const requiresStoreCheck = user.role === "picker" || user.role === "manager";
+    const requiresStoreCheck =
+      user.role === "picker" || user.role === "manager" || user.role === "rider";
     if (requiresStoreCheck) {
       if (!project_code || !store_code) {
         return res.status(400).json({

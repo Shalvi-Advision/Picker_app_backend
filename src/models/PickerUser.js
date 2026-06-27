@@ -9,7 +9,16 @@ const pickerUserSchema = new mongoose.Schema(
     // Role hierarchy:
     //   picker / manager / admin = mobile app users (store-scoped)
     //   super_admin = Retail Magic owner, web admin panel only
-    role: { type: String, enum: ["picker", "manager", "admin", "super_admin"], required: true },
+    role: {
+      type: String,
+      enum: ["picker", "manager", "admin", "rider", "super_admin"],
+      required: true,
+    },
+    rider_availability: {
+      type: String,
+      enum: ["online", "offline"],
+      default: "online",
+    },
     store_codes: { type: [String], default: [] },
     project_code: { type: String, default: "" },
     fcm_token: { type: String, default: null },

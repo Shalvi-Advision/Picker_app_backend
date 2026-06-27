@@ -17,10 +17,12 @@ app.use(express.json());
 
 // Serve APK downloads publicly (no auth — Flutter app needs direct download URL)
 app.use("/downloads", express.static(path.join(__dirname, "../public/downloads")));
+app.use("/uploads", express.static(path.join(__dirname, "../public/uploads")));
 
 app.use("/api/auth", require("./routes/auth.routes"));
 app.use("/api/picker", require("./routes/picker.routes"));
 app.use("/api/manager", require("./routes/manager.routes"));
+app.use("/api/rider", require("./routes/rider.routes"));
 app.use("/api/super-admin", require("./routes/superAdmin.routes"));
 app.use("/api/webhook", require("./routes/webhook.routes"));
 app.use("/api/test", require("./routes/test.routes"));

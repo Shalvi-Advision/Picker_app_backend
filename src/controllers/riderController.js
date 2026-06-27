@@ -1,0 +1,315 @@
+const path = require("path");
+const fs = require("fs");
+const multer = require("multer");
+const DeliveryAssignment = require("../models/DeliveryAssignment");
+const Order = require("../models/Order");
+const PickerUser = require("../models/PickerUser");
+const Notification = require("../models/Notification");
+const { sendToUser } = require("../services/notificationService");
+
+const podDir = path.join(__dirname, "../../public/uploads/pod");
+fs.mkdirSync(podDir, { recursive: true });
+
+const podStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, podDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname) || ".jpg";
+    cb(null, `pod_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`);
+  },
+});
+
+const podUpload = multer({
+  storage: podStorage,
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype && file.mimetype.startsWith("image/")) return cb(null, true);
+    cb(new Error("Only image uploads are allowed"));
+  },
+});
+
+exports.podUpload = podUpload;
+
+function podPublicUrl(req, filename) {
+  const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
+  return `${base.replace(/\/$/, "")}/uploads/pod/${filename}`;
+}
+
+exports.uploadPodPhoto = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "Photo file is required" });
+    }
+    res.json({
+      success: true,
+      data: { url: podPublicUrl(req, req.file.filename) },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getMyDeliveries = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const filter = { rider_id: req.user._id };
+    if (status) filter.status = status;
+
+    const assignments = await DeliveryAssignment.find(filter).sort({ assigned_at: -1 });
+    const orderIds = assignments.map((a) => a.orders_idorders);
+    const orders = await Order.find({ orders_idorders: { $in: orderIds } });
+    const ordersMap = Object.fromEntries(orders.map((o) => [o.orders_idorders, o]));
+
+    const result = assignments.map((a) => ({
+      ...a.toObject(),
+      assignment_id: a._id,
+      order: ordersMap[a.orders_idorders] || null,
+    }));
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getDeliveryDetail = async (req, res) => {
+  try {
+    const orderId = Number(req.params.orders_idorders);
+    const assignment = await DeliveryAssignment.findOne({
+      orders_idorders: orderId,
+      rider_id: req.user._id,
+      status: { $nin: ["cancelled"] },
+    }).sort({ assigned_at: -1 });
+
+    if (!assignment) {
+      return res.status(404).json({ success: false, message: "Delivery assignment not found" });
+    }
+
+    const order = await Order.findOne({ orders_idorders: orderId });
+    res.json({ success: true, data: { assignment, order } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.startDelivery = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const assignment = await DeliveryAssignment.findOneAndUpdate(
+      { _id: id, rider_id: req.user._id, status: "assigned" },
+      { status: "out_for_delivery", started_at: new Date() },
+      { new: true }
+    );
+
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: "Assignment not found or already started",
+      });
+    }
+
+    await Order.updateOne(
+      { orders_idorders: assignment.orders_idorders },
+      { delivery_status: "out_for_delivery" }
+    );
+
+    notifyManagersOfDeliveryEvent(assignment, "started", req.user).catch((e) =>
+      console.error("notifyManagersOfDeliveryEvent failed:", e.message)
+    );
+
+    res.json({ success: true, data: assignment });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.completeDelivery = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { photo_urls, notes, recipient_name, latitude, longitude } = req.body;
+
+    const urls = Array.isArray(photo_urls)
+      ? photo_urls.filter((u) => typeof u === "string" && u.trim())
+      : [];
+    if (!urls.length) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one proof-of-delivery photo is required",
+      });
+    }
+
+    const assignment = await DeliveryAssignment.findOne({
+      _id: id,
+      rider_id: req.user._id,
+      status: "out_for_delivery",
+    });
+
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: "No out-for-delivery assignment found",
+      });
+    }
+
+    assignment.status = "delivered";
+    assignment.delivered_at = new Date();
+    assignment.proof_of_delivery = {
+      photo_urls: urls,
+      notes: notes?.trim() || null,
+      recipient_name: recipient_name?.trim() || null,
+      latitude: latitude != null ? String(latitude) : null,
+      longitude: longitude != null ? String(longitude) : null,
+      captured_at: new Date(),
+    };
+    await assignment.save();
+
+    await Order.updateOne(
+      { orders_idorders: assignment.orders_idorders },
+      { delivery_status: "delivered" }
+    );
+
+    notifyManagersOfDeliveryEvent(assignment, "completed", req.user).catch((e) =>
+      console.error("notifyManagersOfDeliveryEvent failed:", e.message)
+    );
+
+    res.json({ success: true, message: "Delivery completed", data: assignment });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.failDelivery = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    if (!reason || !String(reason).trim()) {
+      return res.status(400).json({ success: false, message: "Failure reason is required" });
+    }
+
+    const assignment = await DeliveryAssignment.findOneAndUpdate(
+      {
+        _id: id,
+        rider_id: req.user._id,
+        status: { $in: ["assigned", "out_for_delivery"] },
+      },
+      { status: "failed", failed_reason: String(reason).trim() },
+      { new: true }
+    );
+
+    if (!assignment) {
+      return res.status(404).json({ success: false, message: "Assignment not found" });
+    }
+
+    await Order.updateOne(
+      { orders_idorders: assignment.orders_idorders },
+      { delivery_status: "failed" }
+    );
+
+    notifyManagersOfDeliveryEvent(assignment, "failed", req.user, reason).catch((e) =>
+      console.error("notifyManagersOfDeliveryEvent failed:", e.message)
+    );
+
+    res.json({ success: true, data: assignment });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.setMyAvailability = async (req, res) => {
+  try {
+    const { online } = req.body;
+    if (typeof online !== "boolean") {
+      return res.status(400).json({ success: false, message: "online boolean required" });
+    }
+
+    const updated = await PickerUser.findOneAndUpdate(
+      { _id: req.user._id, role: "rider" },
+      { rider_availability: online ? "online" : "offline" },
+      { new: true }
+    ).select("-password");
+
+    if (!updated) {
+      return res.status(404).json({ success: false, message: "Rider not found" });
+    }
+
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getMyNotifications = async (req, res) => {
+  try {
+    const { unread_only } = req.query;
+    const filter = { user_id: req.user._id };
+    if (unread_only === "true") filter.read = false;
+    const list = await Notification.find(filter).sort({ createdAt: -1 }).limit(100);
+    const unreadCount = await Notification.countDocuments({
+      user_id: req.user._id,
+      read: false,
+    });
+    res.json({ success: true, data: list, unread_count: unreadCount });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.markMyNotificationRead = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (id === "all") {
+      await Notification.updateMany({ user_id: req.user._id, read: false }, { read: true });
+      return res.json({ success: true, message: "All marked as read" });
+    }
+    const n = await Notification.findOneAndUpdate(
+      { _id: id, user_id: req.user._id },
+      { read: true },
+      { new: true }
+    );
+    if (!n) return res.status(404).json({ success: false, message: "Notification not found" });
+    res.json({ success: true, data: n });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+async function notifyManagersOfDeliveryEvent(assignment, event, rider, reason) {
+  const order = await Order.findOne({ orders_idorders: assignment.orders_idorders });
+  if (!order) return;
+
+  const managers = await PickerUser.find({
+    role: "manager",
+    store_codes: order.store_code,
+  }).select("_id");
+
+  const titles = {
+    started: "Out for delivery",
+    completed: "Delivery completed",
+    failed: "Delivery failed",
+  };
+  const bodies = {
+    started: `Order #${order.orders_idorders} is out for delivery with ${rider.name}.`,
+    completed: `Order #${order.orders_idorders} delivered by ${rider.name}.`,
+    failed: `Order #${order.orders_idorders} delivery failed: ${reason || "No reason"}`,
+  };
+
+  await Promise.all(
+    managers.map((m) =>
+      sendToUser(
+        m._id,
+        titles[event] || "Delivery update",
+        bodies[event] || `Order #${order.orders_idorders} delivery updated.`,
+        {
+          orders_idorders: String(order.orders_idorders),
+          store_code: order.store_code,
+          rider_name: rider.name || "",
+          event,
+        },
+        event === "completed"
+          ? "delivery_completed"
+          : event === "failed"
+            ? "delivery_failed"
+            : "delivery_started"
+      )
+    )
+  );
+}

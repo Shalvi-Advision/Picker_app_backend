@@ -20,12 +20,31 @@ const orderSchema = new mongoose.Schema(
     sent_to_super_admin: { type: Boolean, default: false },
     sent_to_super_admin_at: { type: Date, default: null },
     sent_to_super_admin_by: { type: mongoose.Schema.Types.ObjectId, ref: "PickerUser", default: null },
+    delivery_status: {
+      type: String,
+      enum: [
+        "ready_for_delivery",
+        "assigned",
+        "out_for_delivery",
+        "delivered",
+        "failed",
+        "cancelled",
+      ],
+      default: null,
+    },
+    delivery_slot: { type: String, default: null },
+    current_delivery_assignment_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "DeliveryAssignment",
+      default: null,
+    },
     synced_at: { type: Date, default: Date.now },
   },
   { timestamps: true }
 );
 
 orderSchema.index({ store_code: 1, status: 1 });
+orderSchema.index({ store_code: 1, delivery_status: 1 });
 orderSchema.index({ sent_to_super_admin: 1, sent_to_super_admin_at: -1 });
 
 module.exports = mongoose.model("Order", orderSchema, "orders");

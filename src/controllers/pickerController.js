@@ -158,7 +158,10 @@ exports.completeOrder = async (req, res) => {
       return res.status(404).json({ success: false, message: "No in-progress assignment found" });
     }
 
-    await Order.updateOne({ orders_idorders: Number(orders_idorders) }, { status: "completed" });
+    await Order.updateOne(
+      { orders_idorders: Number(orders_idorders) },
+      { status: "completed", delivery_status: "ready_for_delivery" }
+    );
 
     // Fire-and-forget: notify managers of the store that the order is complete.
     notifyManagersOfCompletedOrder(Number(orders_idorders), req.user).catch((e) =>
@@ -186,13 +189,14 @@ async function notifyManagersOfCompletedOrder(ordersIdorders, picker) {
       sendToUser(
         m._id,
         "Order completed",
-        `Order #${order.orders_idorders} (${order.store_code}) completed by ${picker.name}.`,
+        `Order #${order.orders_idorders} (${order.store_code}) completed by ${picker.name}. Ready for delivery.`,
         {
           orders_idorders: String(order.orders_idorders),
           store_code: order.store_code,
           picker_name: picker.name || "",
+          delivery_status: "ready_for_delivery",
         },
-        "order_completed"
+        "delivery_ready"
       )
     )
   );

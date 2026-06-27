@@ -2,6 +2,7 @@ const bcrypt = require("bcryptjs");
 const Order = require("../models/Order");
 const OrderItem = require("../models/OrderItem");
 const PickerAssignment = require("../models/PickerAssignment");
+const DeliveryAssignment = require("../models/DeliveryAssignment");
 const PickerItemStatus = require("../models/PickerItemStatus");
 const Notification = require("../models/Notification");
 const PickerUser = require("../models/PickerUser");
@@ -10,7 +11,7 @@ const ProjectStore = require("../models/ProjectStore");
 const { replaceOrders, PROJECT_CODE } = require("../services/orderSyncService");
 const { CAPABILITY_KEYS } = require("../constants/capabilities");
 
-const ALLOWED_ROLES = ["picker", "manager", "admin", "super_admin"];
+const ALLOWED_ROLES = ["picker", "manager", "admin", "rider", "super_admin"];
 
 // Keep only known capability keys with boolean values. Returns a plain object
 // suitable for the PickerUser.capability_overrides Map field.
@@ -184,10 +185,11 @@ exports.getNotifications = async (req, res) => {
 
 exports.getAllOrders = async (req, res) => {
   try {
-    const { status, store_code, sent, project_code, order_id } = req.query;
+    const { status, store_code, sent, project_code, order_id, delivery_status } = req.query;
     const filter = {};
     if (project_code) filter.project_code = project_code.toUpperCase();
     if (status) filter.status = status;
+    if (delivery_status) filter.delivery_status = delivery_status;
     if (store_code) filter.store_code = store_code;
     if (sent === "true") filter.sent_to_super_admin = true;
     if (sent === "false") filter.sent_to_super_admin = { $ne: true };
@@ -199,13 +201,23 @@ exports.getAllOrders = async (req, res) => {
     const orders = await Order.find(filter).sort({ order_date: -1 }).limit(500);
 
     const orderIds = orders.map((o) => o.orders_idorders);
-    const assignments = await PickerAssignment.find({ orders_idorders: { $in: orderIds } })
-      .populate("assigned_to", "name email phone")
-      .sort({ assigned_at: -1 });
+    const [assignments, deliveryAssignments] = await Promise.all([
+      PickerAssignment.find({ orders_idorders: { $in: orderIds } })
+        .populate("assigned_to", "name email phone")
+        .sort({ assigned_at: -1 }),
+      DeliveryAssignment.find({ orders_idorders: { $in: orderIds } })
+        .populate("rider_id", "name email phone")
+        .sort({ assigned_at: -1 }),
+    ]);
 
     const assignmentsMap = {};
     for (const a of assignments) {
       if (!assignmentsMap[a.orders_idorders]) assignmentsMap[a.orders_idorders] = a;
+    }
+
+    const deliveryMap = {};
+    for (const a of deliveryAssignments) {
+      if (!deliveryMap[a.orders_idorders]) deliveryMap[a.orders_idorders] = a;
     }
 
     const itemsMap = await buildItemsMap(orderIds);
@@ -213,6 +225,7 @@ exports.getAllOrders = async (req, res) => {
     const result = orders.map((o) => ({
       ...o.toObject(),
       current_assignment: assignmentsMap[o.orders_idorders] || null,
+      current_delivery_assignment: deliveryMap[o.orders_idorders] || null,
       items: itemsMap[o.orders_idorders] || [],
     }));
 

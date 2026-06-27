@@ -1,6 +1,7 @@
 const Order = require("../models/Order");
 const OrderItem = require("../models/OrderItem");
 const PickerAssignment = require("../models/PickerAssignment");
+const DeliveryAssignment = require("../models/DeliveryAssignment");
 const PickerItemStatus = require("../models/PickerItemStatus");
 const PickerEscalation = require("../models/PickerEscalation");
 const PickerUser = require("../models/PickerUser");
@@ -35,21 +36,32 @@ const buildItemsMap = async (orderIds) => {
 
 exports.getAllOrders = async (req, res) => {
   try {
-    const { status, store_code } = req.query;
+    const { status, store_code, delivery_status } = req.query;
     const filter = { store_code: { $in: req.user.store_codes } };
     if (status) filter.status = status;
+    if (delivery_status) filter.delivery_status = delivery_status;
     if (store_code && req.user.store_codes.includes(store_code)) filter.store_code = store_code;
 
     const orders = await Order.find(filter).sort({ order_date: -1 });
 
     const orderIds = orders.map((o) => o.orders_idorders);
-    const assignments = await PickerAssignment.find({ orders_idorders: { $in: orderIds } })
-      .populate("assigned_to", "name email phone")
-      .sort({ assigned_at: -1 });
+    const [assignments, deliveryAssignments] = await Promise.all([
+      PickerAssignment.find({ orders_idorders: { $in: orderIds } })
+        .populate("assigned_to", "name email phone")
+        .sort({ assigned_at: -1 }),
+      DeliveryAssignment.find({ orders_idorders: { $in: orderIds } })
+        .populate("rider_id", "name email phone rider_availability")
+        .sort({ assigned_at: -1 }),
+    ]);
 
     const assignmentsMap = {};
     for (const a of assignments) {
       if (!assignmentsMap[a.orders_idorders]) assignmentsMap[a.orders_idorders] = a;
+    }
+
+    const deliveryMap = {};
+    for (const a of deliveryAssignments) {
+      if (!deliveryMap[a.orders_idorders]) deliveryMap[a.orders_idorders] = a;
     }
 
     const itemsMap = await buildItemsMap(orderIds);
@@ -57,6 +69,7 @@ exports.getAllOrders = async (req, res) => {
     const result = orders.map((o) => ({
       ...o.toObject(),
       current_assignment: assignmentsMap[o.orders_idorders] || null,
+      current_delivery_assignment: deliveryMap[o.orders_idorders] || null,
       items: itemsMap[o.orders_idorders] || [],
     }));
 
@@ -336,3 +349,216 @@ async function notifySuperAdminsOfOrder(order, manager) {
     )
   );
 }
+
+exports.getRiders = async (req, res) => {
+  try {
+    const riders = await PickerUser.find({
+      role: "rider",
+      store_codes: { $in: req.user.store_codes },
+    })
+      .select("-password")
+      .sort({ is_active: -1, rider_availability: 1, name: 1 });
+
+    const riderIds = riders.map((r) => r._id);
+    const activeCounts = await DeliveryAssignment.aggregate([
+      {
+        $match: {
+          rider_id: { $in: riderIds },
+          status: { $in: ["assigned", "out_for_delivery"] },
+        },
+      },
+      { $group: { _id: "$rider_id", active_deliveries: { $sum: 1 } } },
+    ]);
+
+    const countMap = Object.fromEntries(
+      activeCounts.map((c) => [c._id.toString(), c.active_deliveries])
+    );
+
+    const result = riders.map((r) => ({
+      ...r.toObject(),
+      active_deliveries: countMap[r._id.toString()] || 0,
+    }));
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.assignRider = async (req, res) => {
+  try {
+    const orderId = Number(req.params.orders_idorders);
+    const { rider_id } = req.body;
+
+    if (!rider_id) {
+      return res.status(400).json({ success: false, message: "rider_id is required" });
+    }
+
+    const order = await Order.findOne({ orders_idorders: orderId });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+    if (!req.user.store_codes.includes(order.store_code)) {
+      return res.status(403).json({ success: false, message: "Order is outside your stores" });
+    }
+    if (order.status !== "completed") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Only picked/completed orders can be assigned for delivery" });
+    }
+    if (order.delivery_status && !["ready_for_delivery", "failed", "cancelled"].includes(order.delivery_status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Order delivery status is "${order.delivery_status}" — cannot assign rider`,
+      });
+    }
+
+    const activeDelivery = await DeliveryAssignment.findOne({
+      orders_idorders: orderId,
+      status: { $in: ["assigned", "out_for_delivery"] },
+    });
+    if (activeDelivery) {
+      return res.status(409).json({
+        success: false,
+        message: "Order already has an active delivery assignment",
+      });
+    }
+
+    const rider = await PickerUser.findOne({
+      _id: rider_id,
+      role: "rider",
+      is_active: true,
+      store_codes: order.store_code,
+    });
+    if (!rider) {
+      return res.status(404).json({ success: false, message: "Rider not found for this store" });
+    }
+
+    const assignment = await DeliveryAssignment.create({
+      orders_idorders: orderId,
+      store_code: order.store_code,
+      project_code: order.project_code,
+      rider_id: rider._id,
+      assigned_by: req.user._id,
+      status: "assigned",
+    });
+
+    await Order.updateOne(
+      { orders_idorders: orderId },
+      {
+        delivery_status: "assigned",
+        current_delivery_assignment_id: assignment._id,
+      }
+    );
+
+    sendToUser(
+      rider._id,
+      "New delivery assigned",
+      `Order #${orderId} (${order.store_code}) assigned to you.`,
+      {
+        orders_idorders: String(orderId),
+        store_code: order.store_code,
+        assignment_id: String(assignment._id),
+      },
+      "delivery_assigned"
+    ).catch((e) => console.error("assignRider notify failed:", e.message));
+
+    const populated = await DeliveryAssignment.findById(assignment._id).populate(
+      "rider_id",
+      "name email phone rider_availability"
+    );
+
+    res.status(201).json({ success: true, data: populated });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.reassignRider = async (req, res) => {
+  try {
+    const { orders_idorders, new_rider_id } = req.body;
+    const orderId = Number(orders_idorders);
+
+    if (!new_rider_id) {
+      return res.status(400).json({ success: false, message: "new_rider_id is required" });
+    }
+
+    const order = await Order.findOne({ orders_idorders: orderId });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+    if (!req.user.store_codes.includes(order.store_code)) {
+      return res.status(403).json({ success: false, message: "Order is outside your stores" });
+    }
+
+    const current = await DeliveryAssignment.findOne({
+      orders_idorders: orderId,
+      status: { $in: ["assigned", "out_for_delivery"] },
+    });
+    if (!current) {
+      return res.status(404).json({ success: false, message: "No active delivery assignment found" });
+    }
+
+    const rider = await PickerUser.findOne({
+      _id: new_rider_id,
+      role: "rider",
+      is_active: true,
+      store_codes: order.store_code,
+    });
+    if (!rider) {
+      return res.status(404).json({ success: false, message: "Rider not found for this store" });
+    }
+
+    const oldRiderId = current.rider_id;
+    current.status = "cancelled";
+    await current.save();
+
+    const assignment = await DeliveryAssignment.create({
+      orders_idorders: orderId,
+      store_code: order.store_code,
+      project_code: order.project_code,
+      rider_id: rider._id,
+      assigned_by: req.user._id,
+      reassigned_from: oldRiderId,
+      reassigned_at: new Date(),
+      status: "assigned",
+    });
+
+    await Order.updateOne(
+      { orders_idorders: orderId },
+      {
+        delivery_status: "assigned",
+        current_delivery_assignment_id: assignment._id,
+      }
+    );
+
+    await Promise.all([
+      sendToUser(
+        rider._id,
+        "Delivery assigned",
+        `Order #${orderId} (${order.store_code}) reassigned to you.`,
+        {
+          orders_idorders: String(orderId),
+          assignment_id: String(assignment._id),
+        },
+        "delivery_assigned"
+      ),
+      sendToUser(
+        oldRiderId,
+        "Delivery reassigned",
+        `Order #${orderId} was reassigned to another rider.`,
+        { orders_idorders: String(orderId) },
+        "delivery_reassigned"
+      ),
+    ]).catch((e) => console.error("reassignRider notify failed:", e.message));
+
+    const populated = await DeliveryAssignment.findById(assignment._id).populate(
+      "rider_id",
+      "name email phone rider_availability"
+    );
+
+    res.json({ success: true, data: populated });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};

@@ -15,6 +15,9 @@ const {
   getNotifications,
   markNotificationRead,
   sendOrderToSuperAdmin,
+  getRiders,
+  assignRider,
+  reassignRider,
 } = require("../controllers/managerController");
 
 router.use(auth, roleGuard("manager"));
@@ -27,6 +30,13 @@ router.post(
   sendOrderToSuperAdmin
 );
 router.get("/pickers", requireCapability("can_manage_pickers"), getPickers);
+router.get("/riders", requireCapability("can_view_riders"), getRiders);
+router.post(
+  "/orders/:orders_idorders/assign-rider",
+  requireCapability("can_assign_rider"),
+  assignRider
+);
+router.post("/deliveries/reassign", requireCapability("can_reassign_rider"), reassignRider);
 router.post("/reassign", requireCapability("can_reassign"), reassignOrder);
 router.get("/remarks", requireCapability("can_view_remarks"), getAllRemarks);
 router.post("/escalations", requireCapability("can_escalate"), createEscalation);
