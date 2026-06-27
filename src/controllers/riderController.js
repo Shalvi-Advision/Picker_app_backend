@@ -15,7 +15,7 @@ const { notifyUpstreamDelivered } = require("../services/upstreamDeliveryService
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 const {
   getStoreOrigin,
-  buildGoogleMapsDirectionsUrl,
+  buildOsmDirectionsUrl,
 } = require("../services/routeOptimizationService");
 
 function otpEnabled() {
@@ -393,7 +393,7 @@ async function buildRiderRoutePayload(route, riderId) {
       })),
     pending_stops: pendingCount,
     current_stop: currentStop || null,
-    maps_url: buildGoogleMapsDirectionsUrl(origin, coordStops),
+    maps_url: buildOsmDirectionsUrl(origin, coordStops),
     store_origin: origin,
   };
 }

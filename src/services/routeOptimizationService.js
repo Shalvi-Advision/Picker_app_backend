@@ -1,4 +1,5 @@
 const ProjectStore = require("../models/ProjectStore");
+const { buildOsmDirectionsUrl } = require("../utils/osmUrls");
 
 const ROAD_FACTOR = 1.3;
 const AVG_SPEED_KMH = 25;
@@ -89,34 +90,15 @@ function estimateRouteMetrics(origin, orderedStops) {
     eta_source: "haversine",
     polyline,
     encoded_polyline: null,
-    maps_url: buildGoogleMapsDirectionsUrl(origin, orderedStops),
+    maps_url: buildOsmDirectionsUrl(origin, orderedStops),
   };
 }
 
 async function estimateRouteMetricsAsync(origin, orderedStops) {
-  const { getGoogleDirectionsMetrics } = require("./googleDirectionsService");
-  const google = await getGoogleDirectionsMetrics(origin, orderedStops);
-  if (google) return google;
+  const { getOsrmRouteMetrics } = require("./osrmRoutingService");
+  const osrm = await getOsrmRouteMetrics(origin, orderedStops);
+  if (osrm) return osrm;
   return estimateRouteMetrics(origin, orderedStops);
-}
-
-function buildGoogleMapsDirectionsUrl(origin, orderedStops, riderPosition = null) {
-  if (!orderedStops.length) return null;
-
-  const points = orderedStops.map((s) => `${s.lat},${s.lng}`);
-  const destination = points.pop();
-  const start =
-    riderPosition != null
-      ? `${riderPosition.lat},${riderPosition.lng}`
-      : origin != null
-        ? `${origin.lat},${origin.lng}`
-        : null;
-
-  const params = new URLSearchParams({ api: "1", destination, travelmode: "driving" });
-  if (start) params.set("origin", start);
-  if (points.length) params.set("waypoints", points.join("|"));
-
-  return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
 async function getStoreOrigin(projectCode, storeCode) {
@@ -153,7 +135,7 @@ module.exports = {
   suggestStopOrder,
   estimateRouteMetrics,
   estimateRouteMetricsAsync,
-  buildGoogleMapsDirectionsUrl,
+  buildOsmDirectionsUrl,
   getStoreOrigin,
   stopsFromOrders,
 };

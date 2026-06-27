@@ -17,7 +17,7 @@ const {
   estimateRouteMetricsAsync,
   getStoreOrigin,
   stopsFromOrders,
-  buildGoogleMapsDirectionsUrl,
+  buildOsmDirectionsUrl,
 } = require("../services/routeOptimizationService");
 
 // Fetch all order_items for the given order IDs in one query and group them by
@@ -726,7 +726,7 @@ exports.suggestDeliveryRouteOrder = async (req, res) => {
         polyline: metrics.polyline || [],
         encoded_polyline: metrics.encoded_polyline,
         store_origin: origin,
-        maps_url: metrics.maps_url || buildGoogleMapsDirectionsUrl(origin, ordered),
+        maps_url: metrics.maps_url || buildOsmDirectionsUrl(origin, ordered),
       },
     });
   } catch (err) {
@@ -831,7 +831,7 @@ exports.createDeliveryRoute = async (req, res) => {
       data: {
         route: populated,
         assignments,
-        maps_url: buildGoogleMapsDirectionsUrl(origin, ordered),
+        maps_url: buildOsmDirectionsUrl(origin, ordered),
       },
     });
   } catch (err) {
@@ -897,7 +897,7 @@ exports.getDeliveryRoute = async (req, res) => {
           order: ordersMap[s.orders_idorders] || null,
           assignment: assignMap[s.orders_idorders] || null,
         })),
-        maps_url: buildGoogleMapsDirectionsUrl(origin, coordStops),
+        maps_url: buildOsmDirectionsUrl(origin, coordStops),
       },
     });
   } catch (err) {
