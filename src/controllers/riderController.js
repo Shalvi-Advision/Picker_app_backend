@@ -56,7 +56,13 @@ const podUpload = multer({
 exports.podUpload = podUpload;
 
 function podPublicUrl(req, filename) {
-  const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
+  // Prefer an explicit public origin so URLs are always HTTPS. Falling back to
+  // req.protocol yields http:// behind a TLS-terminating proxy, which the
+  // HTTPS admin panel then blocks as mixed content (broken inline images).
+  const base =
+    process.env.PUBLIC_BASE_URL ||
+    process.env.APP_BASE_URL ||
+    `${req.protocol}://${req.get("host")}`;
   return `${base.replace(/\/$/, "")}/uploads/pod/${filename}`;
 }
 
