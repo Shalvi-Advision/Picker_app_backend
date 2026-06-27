@@ -112,8 +112,12 @@ async function assignRiderToOrder({
   await Order.updateOne(
     { orders_idorders: orderId },
     {
-      delivery_status: "assigned",
-      current_delivery_assignment_id: assignment._id,
+      $set: {
+        delivery_status: "assigned",
+        current_delivery_assignment_id: assignment._id,
+      },
+      // Count this dispatch as attempt 1 (never lowers a re-attempt count).
+      $max: { delivery_attempts: 1 },
     }
   );
 

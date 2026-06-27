@@ -20,6 +20,7 @@ const {
   getRider,
   assignRider,
   reassignRider,
+  reattemptDelivery,
   suggestDeliveryRouteOrder,
   createDeliveryRoute,
   getDeliveryRoutes,
@@ -45,6 +46,7 @@ router.post(
   assignRider
 );
 router.post("/deliveries/reassign", requireCapability("can_reassign_rider"), reassignRider);
+router.post("/deliveries/reattempt", requireCapability("can_assign_rider"), reattemptDelivery);
 router.post(
   "/delivery-routes/suggest-order",
   requireCapability("can_create_delivery_route"),

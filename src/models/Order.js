@@ -43,6 +43,9 @@ const orderSchema = new mongoose.Schema(
       ref: "DeliveryRoute",
       default: null,
     },
+    // Total delivery attempts made (1 = original dispatch). Capped at
+    // MAX_DELIVERY_ATTEMPTS; further re-attempts are blocked once reached.
+    delivery_attempts: { type: Number, default: 0 },
     synced_at: { type: Date, default: Date.now },
   },
   { timestamps: true }

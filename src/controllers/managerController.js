@@ -11,6 +11,11 @@ const Notification = require("../models/Notification");
 const { reassignOrder } = require("../services/roundRobinService");
 const { sendToUser } = require("../services/notificationService");
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
+
+// Maximum delivery attempts per order (1 = original dispatch). After this many
+// failed attempts the order is locked and cannot be re-attempted.
+const MAX_DELIVERY_ATTEMPTS = 3;
+
 const {
   MIN_STOPS,
   MAX_STOPS,
@@ -586,6 +591,125 @@ exports.reassignRider = async (req, res) => {
     );
 
     res.json({ success: true, data: populated });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * Manager re-attempts a FAILED delivery by dispatching it to a rider again.
+ * Enforces a hard cap of MAX_DELIVERY_ATTEMPTS total attempts per order.
+ * Body: { orders_idorders, rider_id }
+ */
+exports.reattemptDelivery = async (req, res) => {
+  try {
+    const { orders_idorders, rider_id } = req.body;
+    const orderId = Number(orders_idorders);
+    if (!rider_id) {
+      return res.status(400).json({ success: false, message: "rider_id is required" });
+    }
+
+    const order = await Order.findOne({ orders_idorders: orderId });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+    if (!req.user.store_codes.includes(order.store_code)) {
+      return res.status(403).json({ success: false, message: "Order is outside your stores" });
+    }
+    if (order.delivery_status !== "failed") {
+      return res.status(400).json({
+        success: false,
+        message: "Only a failed delivery can be re-attempted",
+      });
+    }
+
+    // Attempts so far: trust the counter, but fall back to counting the
+    // failed/cancelled assignments for legacy orders that predate the field.
+    let attemptsSoFar = order.delivery_attempts;
+    if (!attemptsSoFar || attemptsSoFar < 1) {
+      attemptsSoFar = await DeliveryAssignment.countDocuments({
+        orders_idorders: orderId,
+        status: { $in: ["failed", "cancelled", "delivered"] },
+      });
+      attemptsSoFar = Math.max(attemptsSoFar, 1);
+    }
+
+    if (attemptsSoFar >= MAX_DELIVERY_ATTEMPTS) {
+      return res.status(409).json({
+        success: false,
+        message: `Maximum ${MAX_DELIVERY_ATTEMPTS} delivery attempts reached for this order`,
+        data: { delivery_attempts: attemptsSoFar, max_attempts: MAX_DELIVERY_ATTEMPTS },
+      });
+    }
+
+    const rider = await PickerUser.findOne({
+      _id: rider_id,
+      role: "rider",
+      is_active: true,
+      store_codes: order.store_code,
+    });
+    if (!rider) {
+      return res.status(404).json({ success: false, message: "Rider not found for this store" });
+    }
+
+    // Close out any lingering non-terminal assignment, then dispatch fresh.
+    const prev = await DeliveryAssignment.findOne({
+      orders_idorders: orderId,
+      status: { $in: ["assigned", "out_for_delivery"] },
+    });
+    if (prev) {
+      prev.status = "cancelled";
+      await prev.save();
+    }
+
+    const nextAttempt = attemptsSoFar + 1;
+    const assignment = await DeliveryAssignment.create({
+      orders_idorders: orderId,
+      store_code: order.store_code,
+      project_code: order.project_code,
+      rider_id: rider._id,
+      assigned_by: req.user._id,
+      reassigned_from: prev ? prev.rider_id : null,
+      reassigned_at: new Date(),
+      status: "assigned",
+    });
+
+    await Order.updateOne(
+      { orders_idorders: orderId },
+      {
+        delivery_status: "assigned",
+        current_delivery_assignment_id: assignment._id,
+        delivery_attempts: nextAttempt,
+      }
+    );
+
+    sendToUser(
+      rider._id,
+      "Delivery re-attempt assigned",
+      `Order #${orderId} (${order.store_code}) — attempt ${nextAttempt} of ${MAX_DELIVERY_ATTEMPTS}.`,
+      {
+        orders_idorders: String(orderId),
+        assignment_id: String(assignment._id),
+        attempt: String(nextAttempt),
+      },
+      NOTIFICATION_TYPES.DELIVERY_ASSIGNED
+    ).catch((e) => console.error("reattemptDelivery notify failed:", e.message));
+
+    const populated = await DeliveryAssignment.findById(assignment._id).populate(
+      "rider_id",
+      "name email phone rider_availability"
+    );
+
+    res.json({
+      success: true,
+      message: `Re-attempt ${nextAttempt} of ${MAX_DELIVERY_ATTEMPTS} dispatched`,
+      data: {
+        assignment: populated,
+        delivery_attempts: nextAttempt,
+        max_attempts: MAX_DELIVERY_ATTEMPTS,
+        attempts_remaining: MAX_DELIVERY_ATTEMPTS - nextAttempt,
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
