@@ -647,10 +647,11 @@ exports.getWebhookLogs = async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 100, 500);
     const skip  = parseInt(req.query.skip) || 0;
-    const { status, store_code, project_code, order_id } = req.query;
+    const { status, store_code, project_code, order_id, event_type } = req.query;
 
     const filter = {};
-    if (status)       filter.status       = status;
+    if (status) filter.status = status;
+    if (event_type) filter.event_type = event_type;
     if (store_code)   filter.store_code   = store_code.toUpperCase();
     if (project_code) filter.project_code = project_code.toUpperCase();
     if (order_id && order_id.trim()) {
