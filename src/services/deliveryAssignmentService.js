@@ -3,30 +3,36 @@ const Order = require("../models/Order");
 const PickerUser = require("../models/PickerUser");
 const { sendToUser } = require("./notificationService");
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
+const { pickNextRider } = require("./riderRoundRobinService");
 
-async function findRiderForStore({ rider_id, rider_email, storeCode }) {
+async function findRiderForStore({ rider_id, rider_email, storeCode, projectCode }) {
   const filter = { role: "rider", is_active: true };
   if (rider_id) filter._id = rider_id;
   else if (rider_email) filter.email = String(rider_email).toLowerCase().trim();
   else return null;
 
+  if (projectCode) filter.project_code = String(projectCode).toUpperCase();
+
   const rider = await PickerUser.findOne(filter);
   if (!rider) return null;
-  if (storeCode && !rider.store_codes.includes(storeCode)) return null;
+  if (storeCode && !rider.store_codes.includes(String(storeCode).toUpperCase())) return null;
   return rider;
 }
 
 /**
  * Assign a rider to an order (creates DeliveryAssignment + updates Order).
+ * Default for webhooks: use_round_robin — picks next rider for order.store_code + order.project_code.
  */
 async function assignRiderToOrder({
   orders_idorders,
   rider_id,
   rider_email,
+  use_round_robin = false,
   assigned_by = null,
   notify = true,
   prepare_order = false,
   replace_active = false,
+  reopen_cancelled = false,
   latitude,
   longitude,
 }) {
@@ -40,7 +46,19 @@ async function assignRiderToOrder({
     return { error: "Order not found", status: 404 };
   }
 
-  if (prepare_order) {
+  if (order.status === "cancelled" || order.delivery_status === "cancelled") {
+    if (!reopen_cancelled) {
+      return { error: "Order is cancelled — set reopen_cancelled to assign again", status: 409 };
+    }
+    await Order.updateOne(
+      { orders_idorders: orderId },
+      { status: "completed", delivery_status: "ready_for_delivery" }
+    );
+    order.status = "completed";
+    order.delivery_status = "ready_for_delivery";
+  }
+
+  if (prepare_order || order.status !== "completed") {
     const orderUpdate = {
       status: "completed",
       delivery_status: "ready_for_delivery",
@@ -60,14 +78,8 @@ async function assignRiderToOrder({
     };
   }
 
-  if (
-    order.delivery_status &&
-    !["ready_for_delivery", "failed", "cancelled"].includes(order.delivery_status)
-  ) {
-    return {
-      error: `Order delivery status is "${order.delivery_status}" — cannot assign rider`,
-      status: 400,
-    };
+  if (order.delivery_status === "delivered") {
+    return { error: "Order is already delivered", status: 409 };
   }
 
   if (replace_active) {
@@ -78,6 +90,23 @@ async function assignRiderToOrder({
       },
       { status: "cancelled" }
     );
+    if (["assigned", "out_for_delivery"].includes(order.delivery_status)) {
+      await Order.updateOne(
+        { orders_idorders: orderId },
+        { delivery_status: "ready_for_delivery", current_delivery_assignment_id: null, current_route_id: null }
+      );
+      order.delivery_status = "ready_for_delivery";
+    }
+  }
+
+  if (
+    order.delivery_status &&
+    !["ready_for_delivery", "failed", "cancelled", null].includes(order.delivery_status)
+  ) {
+    return {
+      error: `Order delivery status is "${order.delivery_status}" — cannot assign rider`,
+      status: 400,
+    };
   }
 
   const activeDelivery = await DeliveryAssignment.findOne({
@@ -91,13 +120,34 @@ async function assignRiderToOrder({
     };
   }
 
-  const rider = await findRiderForStore({
-    rider_id,
-    rider_email,
-    storeCode: order.store_code,
-  });
-  if (!rider) {
-    return { error: "Rider not found for this store", status: 404 };
+  let rider = null;
+  let roundRobinMeta = null;
+
+  if (use_round_robin) {
+    const picked = await pickNextRider(order.store_code, order.project_code);
+    if (picked.error) {
+      return { error: picked.error, status: picked.status || 404 };
+    }
+    rider = picked.rider;
+    roundRobinMeta = {
+      rider_index: picked.rider_index,
+      riders_in_pool: picked.riders_in_pool,
+      store_code: order.store_code,
+      project_code: order.project_code,
+    };
+  } else {
+    if (!rider_id && !rider_email) {
+      return { error: "rider_id or rider_email is required when not using round robin", status: 400 };
+    }
+    rider = await findRiderForStore({
+      rider_id,
+      rider_email,
+      storeCode: order.store_code,
+      projectCode: order.project_code,
+    });
+    if (!rider) {
+      return { error: "Rider not found for this store and project", status: 404 };
+    }
   }
 
   const assignment = await DeliveryAssignment.create({
@@ -116,7 +166,6 @@ async function assignRiderToOrder({
         delivery_status: "assigned",
         current_delivery_assignment_id: assignment._id,
       },
-      // Count this dispatch as attempt 1 (never lowers a re-attempt count).
       $max: { delivery_attempts: 1 },
     }
   );
@@ -129,6 +178,7 @@ async function assignRiderToOrder({
       {
         orders_idorders: String(orderId),
         store_code: order.store_code,
+        project_code: order.project_code,
         assignment_id: String(assignment._id),
       },
       NOTIFICATION_TYPES.DELIVERY_ASSIGNED
@@ -140,7 +190,7 @@ async function assignRiderToOrder({
     "name email phone rider_availability"
   );
 
-  return { assignment: populated, rider, order };
+  return { assignment: populated, rider, order, round_robin: roundRobinMeta };
 }
 
 module.exports = {

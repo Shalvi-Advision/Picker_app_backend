@@ -8,7 +8,7 @@ const routeStopSchema = new mongoose.Schema(
     longitude: { type: String, default: null },
     status: {
       type: String,
-      enum: ["pending", "delivered", "failed"],
+      enum: ["pending", "delivered", "failed", "cancelled"],
       default: "pending",
     },
   },

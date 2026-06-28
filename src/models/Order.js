@@ -14,7 +14,7 @@ const orderSchema = new mongoose.Schema(
     longitude: { type: String, default: null },
     status: {
       type: String,
-      enum: ["pending", "assigned", "in_progress", "completed", "rejected"],
+      enum: ["pending", "assigned", "in_progress", "completed", "rejected", "cancelled"],
       default: "pending",
     },
     sent_to_super_admin: { type: Boolean, default: false },

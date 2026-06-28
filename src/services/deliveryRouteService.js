@@ -17,7 +17,7 @@ async function syncRouteProgress(routeId) {
     if (!a) continue;
     let next = stop.status;
     if (a.status === "delivered") next = "delivered";
-    else if (a.status === "failed") next = "failed";
+    else if (a.status === "failed" || a.status === "cancelled") next = "failed";
     else if (a.status === "out_for_delivery" || a.status === "assigned") next = "pending";
     if (next !== stop.status) {
       stop.status = next;
@@ -25,7 +25,9 @@ async function syncRouteProgress(routeId) {
     }
   }
 
-  const allDone = route.stops.every((s) => s.status === "delivered" || s.status === "failed");
+  const allDone = route.stops.every((s) =>
+    ["delivered", "failed", "cancelled"].includes(s.status)
+  );
   const anyStarted = assignments.some((a) =>
     ["out_for_delivery", "delivered", "failed"].includes(a.status)
   );

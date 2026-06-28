@@ -5,6 +5,7 @@ const roundRobinStateSchema = new mongoose.Schema(
     store_code: { type: String, required: true },
     project_code: { type: String, required: true },
     last_assigned_picker_index: { type: Number, default: -1 },
+    last_assigned_rider_index: { type: Number, default: -1 },
     picker_queue: [{ type: mongoose.Schema.Types.ObjectId, ref: "PickerUser" }],
     updated_at: { type: Date, default: Date.now },
   },

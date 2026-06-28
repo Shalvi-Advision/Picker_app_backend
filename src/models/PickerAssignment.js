@@ -10,7 +10,7 @@ const pickerAssignmentSchema = new mongoose.Schema(
     assignment_round: { type: Number, default: 0 },
     status: {
       type: String,
-      enum: ["assigned", "in_progress", "completed", "rejected", "reassigned"],
+      enum: ["assigned", "in_progress", "completed", "rejected", "reassigned", "cancelled"],
       default: "assigned",
     },
     rejected_reason: { type: String, default: null },

@@ -5,6 +5,8 @@ const WebhookLog = require("../models/WebhookLog");
 const ProjectStore = require("../models/ProjectStore");
 const { assignOrder } = require("../services/roundRobinService");
 const { notifyManagersOfNewOrder } = require("../services/notificationService");
+const { assignRiderToOrder } = require("../services/deliveryAssignmentService");
+const { cancelOrderFromUpstream } = require("../services/orderCancellationService");
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 
@@ -38,24 +40,34 @@ async function log(fields) {
   }
 }
 
+async function verifyWebhookAuth(req, res, ip) {
+  if (!WEBHOOK_SECRET) {
+    await log({ status: "error", error_message: "Webhook secret not configured on server", caller_ip: ip });
+    res.status(500).json({ success: false, message: "Webhook secret not configured on server" });
+    return false;
+  }
+  const incoming = req.headers["x-webhook-secret"];
+  if (!incoming || incoming !== WEBHOOK_SECRET) {
+    await log({ status: "auth_failed", error_message: "Invalid or missing X-Webhook-Secret", caller_ip: ip });
+    res.status(401).json({ success: false, message: "Invalid or missing X-Webhook-Secret" });
+    return false;
+  }
+  return true;
+}
+
+function parseOrderId(rawId) {
+  const orders_idorders = Number(rawId);
+  if (!Number.isFinite(orders_idorders)) return null;
+  return orders_idorders;
+}
+
 /**
  * POST /api/webhook/order
  */
 exports.receiveOrder = async (req, res) => {
   const ip = callerIp(req);
+  if (!(await verifyWebhookAuth(req, res, ip))) return;
 
-  // 1. Authenticate
-  if (!WEBHOOK_SECRET) {
-    await log({ status: "error", error_message: "Webhook secret not configured on server", caller_ip: ip });
-    return res.status(500).json({ success: false, message: "Webhook secret not configured on server" });
-  }
-  const incoming = req.headers["x-webhook-secret"];
-  if (!incoming || incoming !== WEBHOOK_SECRET) {
-    await log({ status: "auth_failed", error_message: "Invalid or missing X-Webhook-Secret", caller_ip: ip });
-    return res.status(401).json({ success: false, message: "Invalid or missing X-Webhook-Secret" });
-  }
-
-  // 2. Validate required fields
   const {
     project_code,
     store_code,
@@ -82,13 +94,12 @@ exports.receiveOrder = async (req, res) => {
     return res.status(400).json({ success: false, message: "items array is required and must not be empty" });
   }
 
-  const orders_idorders = Number(rawId);
-  if (!Number.isFinite(orders_idorders)) {
+  const orders_idorders = parseOrderId(rawId);
+  if (!orders_idorders) {
     await log({ status: "validation_failed", store_code, project_code, error_message: "orders_idorders must be a number", caller_ip: ip });
     return res.status(400).json({ success: false, message: "orders_idorders must be a number" });
   }
 
-  // 3. Idempotency — skip if order already exists
   const existing = await Order.findOne({ orders_idorders }).lean();
   if (existing) {
     await log({ status: "skipped", orders_idorders, store_code, project_code, items_count: items.length, caller_ip: ip });
@@ -100,7 +111,6 @@ exports.receiveOrder = async (req, res) => {
     });
   }
 
-  // 4. Build and insert order + items
   try {
     const parsedDate = parseDate(order_date);
     const totalAmount = items.reduce((sum, i) => sum + toNumber(i.total_amt_our_price), 0);
@@ -152,8 +162,6 @@ exports.receiveOrder = async (req, res) => {
 
     await OrderItem.insertMany(orderItems);
 
-    // 5. Notify managers the order arrived (fire-and-forget — runs before assignment
-    //    so managers are informed even if round-robin later finds no active picker).
     notifyManagersOfNewOrder({
       orders_idorders,
       store_code: String(store_code).toUpperCase(),
@@ -161,14 +169,12 @@ exports.receiveOrder = async (req, res) => {
       total_amount: Math.round(totalAmount * 100) / 100,
     }).catch((e) => console.error("[webhook] notifyManagersOfNewOrder failed:", e.message));
 
-    // 7. Auto-register project+store mapping if it doesn't exist yet
     await ProjectStore.updateOne(
       { project_code: String(project_code).toUpperCase(), store_code: String(store_code).toUpperCase() },
       { $setOnInsert: { project_code: String(project_code).toUpperCase(), store_code: String(store_code).toUpperCase() } },
       { upsert: true }
     );
 
-    // 8. Auto-assign
     let assignment = null;
     let assignError = null;
     try {
@@ -207,6 +213,142 @@ exports.receiveOrder = async (req, res) => {
       caller_ip: ip,
     });
     console.error("[webhook] error processing order:", err.message);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+/**
+ * POST /api/webhook/order/cancel
+ * Upstream admin cancelled the order — force-cancel in picker app even if picked or rider assigned.
+ */
+exports.cancelOrder = async (req, res) => {
+  const ip = callerIp(req);
+  if (!(await verifyWebhookAuth(req, res, ip))) return;
+
+  const { orders_idorders: rawId, reason } = req.body;
+  const orders_idorders = parseOrderId(rawId);
+
+  if (!orders_idorders) {
+    await log({ status: "validation_failed", error_message: "orders_idorders is required", caller_ip: ip });
+    return res.status(400).json({ success: false, message: "orders_idorders is required" });
+  }
+
+  try {
+    const result = await cancelOrderFromUpstream({ orders_idorders, reason });
+
+    if (result.error) {
+      await log({
+        status: "error",
+        orders_idorders,
+        error_message: result.error,
+        caller_ip: ip,
+      });
+      return res.status(result.status || 400).json({ success: false, message: result.error });
+    }
+
+    await log({
+      status: result.already_cancelled ? "skipped" : "success",
+      orders_idorders,
+      store_code: result.order?.store_code || null,
+      project_code: result.order?.project_code || null,
+      caller_ip: ip,
+    });
+
+    return res.json({
+      success: true,
+      orders_idorders,
+      already_cancelled: !!result.already_cancelled,
+      picker_assignments_cancelled: result.picker_assignments_cancelled ?? 0,
+      delivery_assignments_cancelled: result.delivery_assignments_cancelled ?? 0,
+      routes_updated: result.routes_updated ?? 0,
+      order: result.order,
+    });
+  } catch (err) {
+    await log({ status: "error", orders_idorders, error_message: err.message, caller_ip: ip });
+    console.error("[webhook] cancel order failed:", err.message);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+/**
+ * POST /api/webhook/order/assign-rider
+ * Upstream admin accepted the order — round-robin assign to a rider for that order's store + project.
+ *
+ * Body: orders_idorders (required)
+ * Optional: latitude, longitude, prepare_order, replace_active
+ * Optional override: rider_id or rider_email (skips round-robin)
+ */
+exports.assignRider = async (req, res) => {
+  const ip = callerIp(req);
+  if (!(await verifyWebhookAuth(req, res, ip))) return;
+
+  const {
+    orders_idorders: rawId,
+    rider_id,
+    rider_email,
+    latitude,
+    longitude,
+    prepare_order,
+    replace_active,
+  } = req.body;
+
+  const orders_idorders = parseOrderId(rawId);
+  if (!orders_idorders) {
+    await log({ status: "validation_failed", error_message: "orders_idorders is required", caller_ip: ip });
+    return res.status(400).json({ success: false, message: "orders_idorders is required" });
+  }
+
+  try {
+    const existing = await Order.findOne({ orders_idorders }).lean();
+    const shouldPrepare =
+      prepare_order !== false && (!existing || existing.status !== "completed");
+
+    const useRoundRobin = !rider_id && !rider_email;
+
+    const result = await assignRiderToOrder({
+      orders_idorders,
+      rider_id,
+      rider_email,
+      use_round_robin: useRoundRobin,
+      prepare_order: shouldPrepare,
+      replace_active: replace_active !== false,
+      latitude,
+      longitude,
+    });
+
+    if (result.error) {
+      await log({
+        status: "error",
+        orders_idorders,
+        error_message: result.error,
+        caller_ip: ip,
+      });
+      return res.status(result.status || 400).json({ success: false, message: result.error });
+    }
+
+    await log({
+      status: "success",
+      orders_idorders,
+      store_code: result.order?.store_code || null,
+      project_code: result.order?.project_code || null,
+      assigned: true,
+      caller_ip: ip,
+    });
+
+    return res.status(201).json({
+      success: true,
+      orders_idorders,
+      rider_assigned: true,
+      round_robin: result.round_robin || null,
+      data: {
+        assignment: result.assignment,
+        rider: result.rider,
+        order: result.order,
+      },
+    });
+  } catch (err) {
+    await log({ status: "error", orders_idorders, error_message: err.message, caller_ip: ip });
+    console.error("[webhook] assign-rider failed:", err.message);
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 };

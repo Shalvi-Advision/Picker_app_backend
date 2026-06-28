@@ -333,23 +333,23 @@ exports.listTestRiders = async (req, res) => {
  *
  * Body:
  *   orders_idorders (required)
- *   rider_id OR rider_email (required)
+ *   rider_id OR rider_email OR use_round_robin: true
  *   prepare_order (optional) — mark order completed + ready_for_delivery
  *   replace_active (optional) — cancel any active delivery assignment first
  *   latitude, longitude (optional) — set on order when prepare_order is true
  */
 exports.testAssignRider = async (req, res) => {
   try {
-    const { orders_idorders, rider_id, rider_email, prepare_order, replace_active, latitude, longitude } =
+    const { orders_idorders, rider_id, rider_email, use_round_robin, prepare_order, replace_active, latitude, longitude } =
       req.body;
 
     if (!orders_idorders) {
       return res.status(400).json({ success: false, message: "orders_idorders is required" });
     }
-    if (!rider_id && !rider_email) {
+    if (!rider_id && !rider_email && !use_round_robin) {
       return res.status(400).json({
         success: false,
-        message: "rider_id or rider_email is required",
+        message: "rider_id, rider_email, or use_round_robin is required",
       });
     }
 
@@ -357,6 +357,7 @@ exports.testAssignRider = async (req, res) => {
       orders_idorders,
       rider_id,
       rider_email,
+      use_round_robin: !!use_round_robin,
       prepare_order: !!prepare_order,
       replace_active: !!replace_active,
       latitude,
@@ -374,6 +375,7 @@ exports.testAssignRider = async (req, res) => {
         assignment: result.assignment,
         rider: result.rider,
         order: result.order,
+        round_robin: result.round_robin || null,
       },
     });
   } catch (err) {
