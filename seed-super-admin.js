@@ -9,7 +9,7 @@ const MONGO_URI =
 
 const SUPER_ADMIN = {
   name: "Super Admin",
-  email: "superadmin@patelrmart.com",
+  email: "superadmin@sarm.com",
   phone: "9000000000",
   role: "super_admin",
   store_codes: [],
