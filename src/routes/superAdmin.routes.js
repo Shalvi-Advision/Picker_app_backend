@@ -19,6 +19,10 @@ const {
   createUser,
   updateUser,
   deleteUser,
+  listAdminUsers,
+  createAdminUser,
+  updateAdminUser,
+  deleteAdminUser,
   syncOrders,
   getWebhookLogs,
   backfillProjectStores,
@@ -60,6 +64,12 @@ router.get("/users", ownerOnly, listUsers);
 router.post("/users", ownerOnly, createUser);
 router.patch("/users/:id", ownerOnly, updateUser);
 router.delete("/users/:id", ownerOnly, deleteUser);
+
+// Admin users (project_admin management) — super_admin only.
+router.get("/admin-users", ownerOnly, listAdminUsers);
+router.post("/admin-users", ownerOnly, createAdminUser);
+router.patch("/admin-users/:id", ownerOnly, updateAdminUser);
+router.delete("/admin-users/:id", ownerOnly, deleteAdminUser);
 
 // Capability-based RBAC management.
 router.get("/capabilities", ownerOnly, getCapabilities);

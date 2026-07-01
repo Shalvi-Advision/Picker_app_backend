@@ -10,9 +10,29 @@ const PickerUser = require("../models/PickerUser");
 const WebhookLog = require("../models/WebhookLog");
 const ProjectStore = require("../models/ProjectStore");
 const { replaceOrders, PROJECT_CODE } = require("../services/orderSyncService");
-const { CAPABILITY_KEYS } = require("../constants/capabilities");
+const {
+  CAPABILITY_KEYS,
+  PROJECT_ADMIN_PAGE_CAPS,
+} = require("../constants/capabilities");
 
 const ALLOWED_ROLES = ["picker", "manager", "admin", "rider", "super_admin"];
+
+// Page-access overrides a project_admin may be given (owner-only pages excluded
+// upstream in capabilityService). Used to sanitize the create/update payload.
+const PROJECT_ADMIN_CAP_SET = new Set(PROJECT_ADMIN_PAGE_CAPS);
+
+function sanitizePageCaps(input) {
+  const clean = {};
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    for (const cap of PROJECT_ADMIN_CAP_SET) {
+      // Only accept the known page caps; default a missing one to false so the
+      // toggle map is explicit (role defaults still apply for absent keys, but
+      // we store the full page-cap picture the super admin selected).
+      clean[cap] = Boolean(input[cap]);
+    }
+  }
+  return clean;
+}
 
 // Keep only known capability keys with boolean values. Returns a plain object
 // suitable for the PickerUser.capability_overrides Map field.
@@ -651,6 +671,127 @@ exports.deleteUser = async (req, res) => {
     const user = await PickerUser.findByIdAndDelete(id);
     if (!user) return res.status(404).json({ success: false, message: "User not found" });
     res.json({ success: true, message: "User deleted" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// ── Admin users (project_admin management) ───────────────────────────────────
+// Kept separate from the picker/manager user endpoints. super_admin only.
+// A project_admin is scoped to one project_code and gets all of that project's
+// stores automatically; page access is a per-user toggle map.
+
+// All store codes belonging to a project (for auto-scoping a project_admin).
+async function storesForProject(projectCode) {
+  const pc = String(projectCode || "").toUpperCase();
+  const [mapped, fromOrders] = await Promise.all([
+    ProjectStore.distinct("store_code", { project_code: pc }),
+    Order.distinct("store_code", { project_code: pc }),
+  ]);
+  return [...new Set([...mapped, ...fromOrders].filter(Boolean).map((s) => s.toUpperCase()))];
+}
+
+// GET /super-admin/admin-users — list project_admin accounts.
+exports.listAdminUsers = async (_req, res) => {
+  try {
+    const users = await PickerUser.find({ role: "project_admin" })
+      .select("-password")
+      .sort({ name: 1 });
+    res.json({ success: true, data: users });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// POST /super-admin/admin-users — create a project_admin.
+exports.createAdminUser = async (req, res) => {
+  try {
+    const { name, email, phone, password, project_code, is_active = true, page_access = {} } =
+      req.body;
+
+    if (!name || !email || !phone || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "name, email, phone, password are required" });
+    }
+    if (!project_code) {
+      return res
+        .status(400)
+        .json({ success: false, message: "project_code is required for a project admin" });
+    }
+
+    const existing = await PickerUser.findOne({ email: email.toLowerCase() });
+    if (existing) {
+      return res.status(409).json({ success: false, message: "Email already in use" });
+    }
+
+    const pc = String(project_code).toUpperCase();
+    const storeCodes = await storesForProject(pc); // all stores of the project
+    const hashed = await bcrypt.hash(password, 10);
+
+    const user = await PickerUser.create({
+      name,
+      email: email.toLowerCase(),
+      phone,
+      password: hashed,
+      role: "project_admin",
+      project_code: pc,
+      store_codes: storeCodes,
+      is_active,
+      capability_overrides: sanitizePageCaps(page_access),
+    });
+
+    const safe = user.toObject();
+    delete safe.password;
+    res.status(201).json({ success: true, data: safe });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// PATCH /super-admin/admin-users/:id — update a project_admin.
+exports.updateAdminUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, phone, password, project_code, is_active, page_access } = req.body;
+
+    const target = await PickerUser.findById(id);
+    if (!target || target.role !== "project_admin") {
+      return res.status(404).json({ success: false, message: "Admin user not found" });
+    }
+
+    const update = {};
+    if (name !== undefined) update.name = name;
+    if (phone !== undefined) update.phone = phone;
+    if (is_active !== undefined) update.is_active = is_active;
+    if (page_access !== undefined) update.capability_overrides = sanitizePageCaps(page_access);
+    if (password) update.password = await bcrypt.hash(password, 10);
+    if (project_code !== undefined && project_code) {
+      const pc = String(project_code).toUpperCase();
+      update.project_code = pc;
+      update.store_codes = await storesForProject(pc); // re-scope stores to new project
+    }
+
+    const user = await PickerUser.findByIdAndUpdate(id, update, { new: true }).select("-password");
+    res.json({ success: true, data: user });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// DELETE /super-admin/admin-users/:id — remove a project_admin.
+exports.deleteAdminUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (req.user._id.toString() === id) {
+      return res
+        .status(400)
+        .json({ success: false, message: "You cannot delete your own account" });
+    }
+    const user = await PickerUser.findOne({ _id: id, role: "project_admin" });
+    if (!user) return res.status(404).json({ success: false, message: "Admin user not found" });
+    await PickerUser.findByIdAndDelete(id);
+    res.json({ success: true, message: "Admin user deleted" });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

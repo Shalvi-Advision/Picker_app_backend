@@ -61,6 +61,7 @@ const CAPABILITIES = [
   { key: "can_access_riders", label: "Riders page", group: "Panel access", kind: "page", applies_to: ["project_admin"] },
   { key: "can_access_projects", label: "Projects page", group: "Panel access", kind: "page", applies_to: ["project_admin"] },
   { key: "can_access_users", label: "Users page", group: "Panel access", kind: "page", applies_to: [], owner_only: true },
+  { key: "can_access_admin_users", label: "Admin Users page", group: "Panel access", kind: "page", applies_to: [], owner_only: true },
   { key: "can_access_roles", label: "Roles page", group: "Panel access", kind: "page", applies_to: [], owner_only: true },
   { key: "can_access_webhook_logs", label: "Webhook Logs page", group: "Panel access", kind: "page", applies_to: [], owner_only: true },
   { key: "can_access_app_release", label: "App Release page", group: "Panel access", kind: "page", applies_to: [], owner_only: true },
@@ -72,6 +73,7 @@ const CAPABILITIES = [
 const PANEL_PAGES = [
   { key: "dashboard", path: "/dashboard", label: "Dashboard", cap: "can_access_dashboard", owner_only: false },
   { key: "users", path: "/users", label: "Users", cap: "can_access_users", owner_only: true },
+  { key: "admin_users", path: "/admin-users", label: "Admin Users", cap: "can_access_admin_users", owner_only: true },
   { key: "roles", path: "/roles", label: "Roles", cap: "can_access_roles", owner_only: true },
   { key: "riders", path: "/riders", label: "Riders", cap: "can_access_riders", owner_only: false },
   { key: "deliveries", path: "/deliveries", label: "Deliveries", cap: "can_access_deliveries", owner_only: false },
