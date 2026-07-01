@@ -19,25 +19,26 @@ exports.login = async (req, res) => {
     }
 
     // Hard RBAC by client surface:
-    //   client="admin_panel" (web) → only super_admin allowed
-    //   client="mobile" or unset (legacy) → super_admin forbidden, mobile roles only
+    //   client="admin_panel" (web) → super_admin or project_admin
+    //   client="mobile" or unset (legacy) → web-panel roles forbidden, mobile roles only
+    const WEB_PANEL_ROLES = ["super_admin", "project_admin"];
     if (client === "admin_panel") {
-      if (user.role !== "super_admin") {
+      if (!WEB_PANEL_ROLES.includes(user.role)) {
         return res
           .status(403)
-          .json({ success: false, message: "This panel is for super admins only." });
+          .json({ success: false, message: "This panel is for admin users only." });
       }
     } else {
-      if (user.role === "super_admin") {
+      if (WEB_PANEL_ROLES.includes(user.role)) {
         return res.status(403).json({
           success: false,
-          message: "Super admins must use the web admin panel.",
+          message: "Admin users must use the web admin panel.",
         });
       }
     }
 
-    // admin (mobile top-of-hierarchy) bypasses project/store checks like the old super_admin did.
-    // picker and manager remain store-scoped.
+    // Web-panel admins (super_admin / project_admin) log in with email + password
+    // only — no project/branch code entry. picker/manager/rider remain store-scoped.
     const requiresStoreCheck =
       user.role === "picker" || user.role === "manager" || user.role === "rider";
     if (requiresStoreCheck) {

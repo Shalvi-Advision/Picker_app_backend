@@ -11,7 +11,7 @@ const pickerUserSchema = new mongoose.Schema(
     //   super_admin = Retail Magic owner, web admin panel only
     role: {
       type: String,
-      enum: ["picker", "manager", "admin", "rider", "super_admin"],
+      enum: ["picker", "manager", "admin", "rider", "super_admin", "project_admin"],
       required: true,
     },
     rider_availability: {

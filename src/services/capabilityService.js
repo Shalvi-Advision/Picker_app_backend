@@ -3,7 +3,12 @@ const {
   CAPABILITY_KEYS,
   DEFAULT_ROLE_CAPABILITIES,
   UI_STATIC,
+  PANEL_PAGES,
 } = require("../constants/capabilities");
+
+// Page caps that must NEVER be true for a project_admin, no matter what a
+// per-user override says. Prevents privilege escalation into owner-only pages.
+const OWNER_ONLY_PAGE_CAPS = PANEL_PAGES.filter((p) => p.owner_only).map((p) => p.cap);
 
 // Mongoose Map fields come back as a Map; plain objects come from req.body.
 // Normalize either into a plain { key: bool } object.
@@ -40,7 +45,25 @@ async function getEffectiveCapabilities(user) {
 
   const roleCaps = await getRoleCapabilities(user.role);
   const overrides = toPlain(user.capability_overrides);
-  return { ...roleCaps, ...overrides };
+  const effective = { ...roleCaps, ...overrides };
+
+  // Hard security floor: owner-only pages can never be granted to non-owners,
+  // even via a stray capability_override.
+  for (const cap of OWNER_ONLY_PAGE_CAPS) effective[cap] = false;
+  return effective;
+}
+
+// Panel pages this user may access, in nav order. super_admin gets all;
+// everyone else is filtered by their effective page capabilities.
+function allowedPagesFor(user, caps) {
+  if (user.role === "super_admin") {
+    return PANEL_PAGES.map((p) => ({ key: p.key, path: p.path, label: p.label }));
+  }
+  return PANEL_PAGES.filter((p) => caps[p.cap] === true).map((p) => ({
+    key: p.key,
+    path: p.path,
+    label: p.label,
+  }));
 }
 
 // Single capability check used by the requireCapability middleware.
@@ -66,6 +89,8 @@ async function buildUiConfig(user) {
     can_escalate: caps.can_escalate === true,
     can_view_all_stores: caps.can_view_all_stores === true,
     capabilities: caps,
+    // Web admin-panel page access (nav + route guards read this).
+    allowed_pages: allowedPagesFor(user, caps),
   };
 }
 
@@ -74,4 +99,5 @@ module.exports = {
   getEffectiveCapabilities,
   hasCapability,
   buildUiConfig,
+  allowedPagesFor,
 };

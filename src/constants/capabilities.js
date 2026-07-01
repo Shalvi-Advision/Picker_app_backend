@@ -51,7 +51,38 @@ const CAPABILITIES = [
   { key: "can_view_remarks", label: "View picker remarks", group: "Visibility", kind: "read", applies_to: ["manager"] },
   { key: "can_view_all_stores", label: "See all stores", group: "Visibility", kind: "ui", applies_to: ["manager", "admin"] },
   { key: "can_view_deliveries_admin", label: "View deliveries (cross-store)", group: "Visibility", kind: "read", applies_to: ["admin"] },
+
+  // Admin-panel page access (web). One capability per sidebar page. Gated for
+  // project_admin (super_admin always has all). "owner_only: true" pages are
+  // never grantable to project_admin regardless of toggles.
+  { key: "can_access_dashboard", label: "Dashboard page", group: "Panel access", kind: "page", applies_to: ["project_admin"] },
+  { key: "can_access_orders", label: "Orders page", group: "Panel access", kind: "page", applies_to: ["project_admin"] },
+  { key: "can_access_deliveries", label: "Deliveries page", group: "Panel access", kind: "page", applies_to: ["project_admin"] },
+  { key: "can_access_riders", label: "Riders page", group: "Panel access", kind: "page", applies_to: ["project_admin"] },
+  { key: "can_access_projects", label: "Projects page", group: "Panel access", kind: "page", applies_to: ["project_admin"] },
+  { key: "can_access_users", label: "Users page", group: "Panel access", kind: "page", applies_to: [], owner_only: true },
+  { key: "can_access_roles", label: "Roles page", group: "Panel access", kind: "page", applies_to: [], owner_only: true },
+  { key: "can_access_webhook_logs", label: "Webhook Logs page", group: "Panel access", kind: "page", applies_to: [], owner_only: true },
+  { key: "can_access_app_release", label: "App Release page", group: "Panel access", kind: "page", applies_to: [], owner_only: true },
 ];
+
+// Sidebar pages in nav order, with the capability that unlocks each and its
+// frontend route. Single source of truth for both nav rendering and route
+// guards. owner_only pages are super_admin-exclusive.
+const PANEL_PAGES = [
+  { key: "dashboard", path: "/dashboard", label: "Dashboard", cap: "can_access_dashboard", owner_only: false },
+  { key: "users", path: "/users", label: "Users", cap: "can_access_users", owner_only: true },
+  { key: "roles", path: "/roles", label: "Roles", cap: "can_access_roles", owner_only: true },
+  { key: "riders", path: "/riders", label: "Riders", cap: "can_access_riders", owner_only: false },
+  { key: "deliveries", path: "/deliveries", label: "Deliveries", cap: "can_access_deliveries", owner_only: false },
+  { key: "orders", path: "/orders", label: "Orders", cap: "can_access_orders", owner_only: false },
+  { key: "projects", path: "/projects", label: "Projects", cap: "can_access_projects", owner_only: false },
+  { key: "webhook_logs", path: "/webhook-logs", label: "Webhook Logs", cap: "can_access_webhook_logs", owner_only: true },
+  { key: "app_release", path: "/app-release", label: "App Release", cap: "can_access_app_release", owner_only: true },
+];
+
+// Page caps a project_admin MAY be granted (everything not owner_only).
+const PROJECT_ADMIN_PAGE_CAPS = PANEL_PAGES.filter((p) => !p.owner_only).map((p) => p.cap);
 
 const CAPABILITY_KEYS = new Set(CAPABILITIES.map((c) => c.key));
 
@@ -164,6 +195,27 @@ const DEFAULT_ROLE_CAPABILITIES = {
     can_view_deliveries_admin: false,
     ...FALSE_DELIVERY_MANAGER,
   },
+  // Web admin-panel role, scoped to one project_code (all its stores). Defaults
+  // grant the non-owner pages; the super admin can toggle each per user via
+  // capability_overrides. owner_only pages are force-denied below.
+  project_admin: {
+    can_access_dashboard: true,
+    can_access_orders: true,
+    can_access_deliveries: true,
+    can_access_riders: true,
+    can_access_projects: true,
+    // Owner-only pages: never on for project_admin.
+    can_access_users: false,
+    can_access_roles: false,
+    can_access_webhook_logs: false,
+    can_access_app_release: false,
+    // Data visibility within the project.
+    can_view_orders: true,
+    can_view_delivery_status: true,
+    can_view_riders: true,
+    can_view_all_stores: false, // scoped to their project's stores, not global
+    can_view_deliveries_admin: true,
+  },
 };
 
 // Static (non-capability) UI scaffolding moved out of authController's UI_CONFIG.
@@ -211,4 +263,6 @@ module.exports = {
   CAPABILITY_KEYS,
   DEFAULT_ROLE_CAPABILITIES,
   UI_STATIC,
+  PANEL_PAGES,
+  PROJECT_ADMIN_PAGE_CAPS,
 };
