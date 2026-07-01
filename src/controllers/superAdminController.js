@@ -26,6 +26,28 @@ function sanitizeOverrides(input) {
   return clean;
 }
 
+// ── Project data-scoping ──────────────────────────────────────────────────────
+// A project_admin may only ever see data for their own project_code. These
+// helpers are the single chokepoint: super_admin passes through untouched;
+// project_admin gets their project forced onto every query (a client-supplied
+// project_code query param can never widen this).
+
+// The project_code a caller is locked to, or null if unscoped (super_admin).
+function callerProjectScope(req) {
+  if (req.user?.role === "project_admin") {
+    return (req.user.project_code || "").toUpperCase();
+  }
+  return null; // super_admin — no restriction
+}
+
+// Merge a project scope into a Mongo filter object. Returns the same filter for
+// chaining. For a project_admin this OVERWRITES any project_code already set.
+function scopeToProject(req, filter = {}) {
+  const scope = callerProjectScope(req);
+  if (scope) filter.project_code = scope;
+  return filter;
+}
+
 // Only orders that have been explicitly sent up by a manager.
 const SENT_FILTER = { sent_to_super_admin: true };
 
@@ -78,12 +100,15 @@ exports.getDashboardKpis = async (req, res) => {
     const { project_code } = req.query;
     const baseFilter = { ...SENT_FILTER };
     if (project_code) baseFilter.project_code = project_code.toUpperCase();
+    scopeToProject(req, baseFilter); // project_admin: force own project
 
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    const deliveryFilter = project_code ? { project_code: project_code.toUpperCase() } : {};
+    const deliveryFilter = {};
+    if (project_code) deliveryFilter.project_code = project_code.toUpperCase();
+    scopeToProject(req, deliveryFilter);
 
     const [
       total,
@@ -112,7 +137,7 @@ exports.getDashboardKpis = async (req, res) => {
       DeliveryAssignment.countDocuments({
         status: "delivered",
         delivered_at: { $gte: todayStart },
-        ...(project_code ? { project_code: project_code.toUpperCase() } : {}),
+        ...deliveryFilter,
       }),
       Order.countDocuments({ ...deliveryFilter, delivery_status: "failed" }),
       PickerUser.countDocuments({ role: "rider", is_active: true }),
@@ -148,6 +173,7 @@ exports.getOrders = async (req, res) => {
     const filter = { ...SENT_FILTER };
     if (project_code) filter.project_code = project_code.toUpperCase();
     if (store_code) filter.store_code = store_code;
+    scopeToProject(req, filter);
 
     const orders = await Order.find(filter).sort({ sent_to_super_admin_at: -1 });
 
@@ -193,6 +219,10 @@ exports.getOrderItems = async (req, res) => {
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
+    const scope = callerProjectScope(req);
+    if (scope && (order.project_code || "").toUpperCase() !== scope) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
 
     const assignment = await PickerAssignment.findOne({ orders_idorders: orderId }).sort({
       assigned_at: -1,
@@ -222,6 +252,11 @@ exports.getOrderDelivery = async (req, res) => {
     const orderId = Number(req.params.orders_idorders);
     const order = await Order.findOne({ orders_idorders: orderId });
     if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+    // project_admin may not read an order outside their project.
+    const scope = callerProjectScope(req);
+    if (scope && (order.project_code || "").toUpperCase() !== scope) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
@@ -261,6 +296,7 @@ exports.listDeliveries = async (req, res) => {
     if (store_code) filter.store_code = store_code.toUpperCase();
     if (delivery_date) filter.delivery_date = delivery_date;
     if (delivery_slot) filter.delivery_slot = delivery_slot;
+    scopeToProject(req, filter);
 
     if (order_id && order_id.trim()) {
       const n = Number(order_id.trim());
@@ -303,6 +339,7 @@ exports.getRiderLocations = async (req, res) => {
     const { store_code } = req.query;
     const filter = { role: "rider", is_active: true };
     if (store_code) filter.store_codes = store_code.toUpperCase();
+    scopeToProject(req, filter);
 
     const riders = await PickerUser.find(filter)
       .select("name phone rider_availability store_codes last_location")
@@ -345,6 +382,7 @@ exports.listRiders = async (req, res) => {
     const filter = { role: "rider" };
     if (project_code) filter.project_code = project_code.toUpperCase();
     if (store_code) filter.store_codes = store_code.toUpperCase();
+    scopeToProject(req, filter);
     if (q && q.trim()) {
       const rx = new RegExp(q.trim(), "i");
       filter.$or = [{ name: rx }, { email: rx }, { phone: rx }];
@@ -421,6 +459,7 @@ exports.getAllOrders = async (req, res) => {
       const n = Number(order_id.trim());
       filter.orders_idorders = Number.isFinite(n) ? n : -1;
     }
+    scopeToProject(req, filter);
 
     const orders = await Order.find(filter).sort({ order_date: -1 }).limit(500);
 
@@ -463,6 +502,7 @@ exports.listStores = async (req, res) => {
   try {
     const { project_code } = req.query;
     const filter = project_code ? { project_code: project_code.toUpperCase() } : {};
+    scopeToProject(req, filter);
     const stores = await Order.distinct("store_code", filter);
     res.json({ success: true, data: stores.sort() });
   } catch (err) {
@@ -470,9 +510,11 @@ exports.listStores = async (req, res) => {
   }
 };
 
-exports.listProjects = async (_req, res) => {
+exports.listProjects = async (req, res) => {
   try {
-    const projects = await Order.distinct("project_code");
+    // project_admin only ever sees their own project in pickers/dropdowns.
+    const scope = callerProjectScope(req);
+    const projects = await Order.distinct("project_code", scope ? { project_code: scope } : {});
     res.json({ success: true, data: projects.filter(Boolean).sort() });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -486,6 +528,7 @@ exports.listUsers = async (req, res) => {
     if (project_code) filter.project_code = project_code.toUpperCase();
     if (role) filter.role = role;
     if (store_code) filter.store_codes = store_code;
+    scopeToProject(req, filter);
     if (q) {
       const rx = new RegExp(q, "i");
       filter.$or = [{ name: rx }, { email: rx }, { phone: rx }];

@@ -1,11 +1,28 @@
 const ProjectStore = require("../models/ProjectStore");
 const PickerUser   = require("../models/PickerUser");
 
+// A project_admin is locked to their own project_code; super_admin is unscoped.
+function projectScopeFilter(req) {
+  if (req.user?.role === "project_admin") {
+    return { project_code: (req.user.project_code || "").toUpperCase() };
+  }
+  return {};
+}
+
+// True if the caller is a project_admin and the target project is NOT theirs.
+function isForeignProject(req, projectCode) {
+  if (req.user?.role !== "project_admin") return false;
+  const own = (req.user.project_code || "").toUpperCase();
+  return (projectCode || "").toUpperCase() !== own;
+}
+
 // GET /super-admin/project-stores
 // Returns all project codes, each with its store codes and user counts.
-exports.listProjectStores = async (_req, res) => {
+exports.listProjectStores = async (req, res) => {
   try {
-    const rows = await ProjectStore.find().sort({ project_code: 1, store_code: 1 }).lean();
+    const rows = await ProjectStore.find(projectScopeFilter(req))
+      .sort({ project_code: 1, store_code: 1 })
+      .lean();
 
     // Group by project_code
     const map = {};
@@ -62,6 +79,9 @@ exports.createProjectStore = async (req, res) => {
     if (!project_code || !store_code) {
       return res.status(400).json({ success: false, message: "project_code and store_code are required" });
     }
+    if (isForeignProject(req, project_code)) {
+      return res.status(403).json({ success: false, message: "You can only manage your own project." });
+    }
     const doc = await ProjectStore.create({
       project_code: project_code.trim().toUpperCase(),
       store_code:   store_code.trim().toUpperCase(),
@@ -79,8 +99,12 @@ exports.createProjectStore = async (req, res) => {
 exports.deleteProjectStore = async (req, res) => {
   try {
     const { id } = req.params;
-    const doc = await ProjectStore.findByIdAndDelete(id);
-    if (!doc) return res.status(404).json({ success: false, message: "Mapping not found" });
+    const existing = await ProjectStore.findById(id);
+    if (!existing) return res.status(404).json({ success: false, message: "Mapping not found" });
+    if (isForeignProject(req, existing.project_code)) {
+      return res.status(403).json({ success: false, message: "You can only manage your own project." });
+    }
+    await ProjectStore.findByIdAndDelete(id);
     res.json({ success: true, message: "Mapping deleted" });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -97,13 +121,17 @@ exports.updateProjectStore = async (req, res) => {
     if (longitude !== undefined) updates.longitude = longitude ? String(longitude).trim() : null;
     if (address !== undefined) updates.address = address ? String(address).trim() : null;
 
+    const existing = await ProjectStore.findById(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ success: false, message: "Mapping not found" });
+    }
+    if (isForeignProject(req, existing.project_code)) {
+      return res.status(403).json({ success: false, message: "You can only manage your own project." });
+    }
     const doc = await ProjectStore.findByIdAndUpdate(req.params.id, updates, {
       new: true,
       runValidators: true,
     });
-    if (!doc) {
-      return res.status(404).json({ success: false, message: "Mapping not found" });
-    }
     res.json({ success: true, data: doc });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -115,6 +143,9 @@ exports.updateProjectStore = async (req, res) => {
 exports.getStoreUsers = async (req, res) => {
   try {
     const { project_code, store_code } = req.params;
+    if (isForeignProject(req, project_code)) {
+      return res.status(403).json({ success: false, message: "You can only view your own project." });
+    }
     const users = await PickerUser.find({
       project_code: project_code.toUpperCase(),
       store_codes:  store_code.toUpperCase(),
