@@ -4,6 +4,7 @@ const multer = require("multer");
 const DeliveryAssignment = require("../models/DeliveryAssignment");
 const DeliveryRoute = require("../models/DeliveryRoute");
 const Order = require("../models/Order");
+const OrderItem = require("../models/OrderItem");
 const PickerUser = require("../models/PickerUser");
 const Notification = require("../models/Notification");
 const { sendToUser } = require("../services/notificationService");
@@ -117,11 +118,21 @@ exports.getDeliveryDetail = async (req, res) => {
     }
 
     const order = await Order.findOne({ orders_idorders: orderId });
+
+    // Line items the rider is carrying — read-only view (name, qty, price).
+    const items = await OrderItem.find({ orders_idorders: orderId })
+      .select(
+        "item_name product_description pack_size ordered_quantity " +
+          "product_offer_price product_mrp total_amt_our_price"
+      )
+      .sort({ item_name: 1 });
+
     res.json({
       success: true,
       data: {
         assignment,
         order,
+        items,
         otp_required: otpEnabled() && assignment.status === "out_for_delivery",
       },
     });
