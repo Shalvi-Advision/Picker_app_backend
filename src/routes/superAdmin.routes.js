@@ -1,6 +1,8 @@
 const router = require("express").Router();
 const auth = require("../middleware/auth");
 const roleGuard = require("../middleware/roleGuard");
+const requireCapability = require("../middleware/requireCapability");
+const { hasCapability } = require("../services/capabilityService");
 const {
   getDashboardKpis,
   getNotificationTypes,
@@ -41,25 +43,37 @@ const {
 
 router.use(auth);
 
-// Routes shared by mobile `admin` and web `super_admin`.
-// These show only orders that managers have explicitly escalated upward.
+// Pass if the caller is one of `roles` OR holds capability `cap`. Lets a single
+// route serve, say, the mobile `admin` role AND a web project_admin who has the
+// matching page capability, while super_admin always passes (all-caps).
+const anyOf = (roles, cap) => async (req, res, next) => {
+  try {
+    if (roles.includes(req.user.role)) return next();
+    if (cap && (await hasCapability(req.user, cap))) return next();
+    return res.status(403).json({ success: false, message: "Access denied" });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// Routes shared by mobile `admin`, web `super_admin`, and page-capable project_admins.
 const sharedGuard = roleGuard("admin", "super_admin");
-router.get("/dashboard", sharedGuard, getDashboardKpis);
+router.get("/dashboard", anyOf(["admin", "super_admin"], "can_access_dashboard"), getDashboardKpis);
 router.get("/notification-types", sharedGuard, getNotificationTypes);
-router.get("/orders", sharedGuard, getOrders);
-router.get("/orders/:orders_idorders/items", sharedGuard, getOrderItems);
+router.get("/orders", anyOf(["admin", "super_admin"], "can_access_orders"), getOrders);
+router.get("/orders/:orders_idorders/items", anyOf(["admin", "super_admin"], "can_access_orders"), getOrderItems);
 router.get("/notifications", sharedGuard, getNotifications);
 router.patch("/notifications/:id/read", sharedGuard, markNotificationRead);
 
-// Web admin panel only — Retail Magic super_admin.
+// Web admin panel — super_admin, plus project_admin gated by page capability.
 const ownerOnly = roleGuard("super_admin");
-router.get("/all-orders", ownerOnly, getAllOrders);
-router.get("/orders/:orders_idorders/delivery", ownerOnly, getOrderDelivery);
-router.get("/deliveries", ownerOnly, listDeliveries);
-router.get("/riders/locations", ownerOnly, getRiderLocations);
-router.get("/riders", ownerOnly, listRiders);
-router.get("/stores", ownerOnly, listStores);
-router.get("/projects", ownerOnly, listProjects);
+router.get("/all-orders", requireCapability("can_access_orders"), getAllOrders);
+router.get("/orders/:orders_idorders/delivery", requireCapability("can_access_orders"), getOrderDelivery);
+router.get("/deliveries", requireCapability("can_access_deliveries"), listDeliveries);
+router.get("/riders/locations", requireCapability("can_access_deliveries"), getRiderLocations);
+router.get("/riders", requireCapability("can_access_riders"), listRiders);
+router.get("/stores", requireCapability("can_access_orders"), listStores);
+router.get("/projects", requireCapability("can_access_orders"), listProjects);
 router.get("/users", ownerOnly, listUsers);
 router.post("/users", ownerOnly, createUser);
 router.patch("/users/:id", ownerOnly, updateUser);
@@ -75,12 +89,13 @@ router.delete("/admin-users/:id", ownerOnly, deleteAdminUser);
 router.get("/capabilities", ownerOnly, getCapabilities);
 router.patch("/roles/:role/capabilities", ownerOnly, updateRoleCapabilities);
 
-// Project → store code mappings.
-router.get("/project-stores", ownerOnly, listProjectStores);
-router.post("/project-stores", ownerOnly, createProjectStore);
-router.patch("/project-stores/:id", ownerOnly, updateProjectStore);
-router.delete("/project-stores/:id", ownerOnly, deleteProjectStore);
-router.get("/project-stores/:project_code/stores/:store_code/users", ownerOnly, getStoreUsers);
+// Project → store code mappings (Projects page). project_admin writes are
+// further restricted to their own project inside the controller.
+router.get("/project-stores", requireCapability("can_access_projects"), listProjectStores);
+router.post("/project-stores", requireCapability("can_access_projects"), createProjectStore);
+router.patch("/project-stores/:id", requireCapability("can_access_projects"), updateProjectStore);
+router.delete("/project-stores/:id", requireCapability("can_access_projects"), deleteProjectStore);
+router.get("/project-stores/:project_code/stores/:store_code/users", requireCapability("can_access_projects"), getStoreUsers);
 
 // DESTRUCTIVE manual reset: clears & replaces all orders from the source API.
 router.post("/sync-orders", ownerOnly, syncOrders);

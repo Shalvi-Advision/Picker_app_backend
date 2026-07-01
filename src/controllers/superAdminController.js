@@ -160,7 +160,7 @@ exports.getDashboardKpis = async (req, res) => {
         ...deliveryFilter,
       }),
       Order.countDocuments({ ...deliveryFilter, delivery_status: "failed" }),
-      PickerUser.countDocuments({ role: "rider", is_active: true }),
+      PickerUser.countDocuments(scopeToProject(req, { role: "rider", is_active: true })),
     ]);
 
     const totalAmount = agg[0]?.total_amount || 0;
