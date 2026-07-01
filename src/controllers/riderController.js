@@ -21,8 +21,13 @@ const {
   estimateRouteMetricsAsync,
   stopsFromOrders,
   parseCoord,
+  haversineKm,
   MAX_STOPS,
 } = require("../services/routeOptimizationService");
+
+// Rider must be within this many metres of the customer to complete delivery.
+// Mirrors kGeofenceRadiusMeters on the app; server records (not blocks) breaches.
+const GEOFENCE_RADIUS_M = 200;
 
 function otpEnabled() {
   return process.env.DELIVERY_OTP_ENABLED === "true";
@@ -217,6 +222,20 @@ exports.completeDelivery = async (req, res) => {
       }
     }
 
+    const order = await Order.findOne({ orders_idorders: assignment.orders_idorders });
+
+    // Geofence audit: measure how far the rider's POD GPS was from the saved
+    // customer location. Record only (never block server-side) — the app gates
+    // the UX; here we keep the ground truth for review of overrides/spoofing.
+    let distanceToCustomerM = null;
+    let outOfGeofence = null;
+    const dest = order ? parseCoord(order.latitude, order.longitude) : null;
+    const podPoint = parseCoord(latitude, longitude);
+    if (dest && podPoint) {
+      distanceToCustomerM = Math.round(haversineKm(podPoint, dest) * 1000);
+      outOfGeofence = distanceToCustomerM > GEOFENCE_RADIUS_M;
+    }
+
     assignment.status = "delivered";
     assignment.delivered_at = new Date();
     assignment.proof_of_delivery = {
@@ -226,10 +245,19 @@ exports.completeDelivery = async (req, res) => {
       recipient_name: recipient_name?.trim() || null,
       latitude: latitude != null ? String(latitude) : null,
       longitude: longitude != null ? String(longitude) : null,
+      distance_to_customer_m: distanceToCustomerM,
+      out_of_geofence: outOfGeofence,
       captured_at: new Date(),
     };
     assignment.delivery_otp = null;
     await assignment.save();
+
+    if (outOfGeofence) {
+      console.warn(
+        `POD outside geofence: order ${assignment.orders_idorders}, ` +
+          `${distanceToCustomerM}m (limit ${GEOFENCE_RADIUS_M}m), rider ${req.user._id}`
+      );
+    }
 
     await Order.updateOne(
       { orders_idorders: assignment.orders_idorders },
@@ -237,8 +265,6 @@ exports.completeDelivery = async (req, res) => {
     );
 
     await onAssignmentFinished(assignment, "delivered");
-
-    const order = await Order.findOne({ orders_idorders: assignment.orders_idorders });
     notifyUpstreamDelivered(order, assignment, req.user).catch((e) =>
       console.error("notifyUpstreamDelivered failed:", e.message)
     );

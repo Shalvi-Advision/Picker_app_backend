@@ -8,6 +8,10 @@ const proofOfDeliverySchema = new mongoose.Schema(
     notes: { type: String, default: null },
     latitude: { type: String, default: null },
     longitude: { type: String, default: null },
+    // Geofence audit: distance (metres) between the rider's POD GPS and the
+    // saved customer location, and whether it fell outside the fence radius.
+    distance_to_customer_m: { type: Number, default: null },
+    out_of_geofence: { type: Boolean, default: null },
     captured_at: { type: Date, default: null },
   },
   { _id: false }
