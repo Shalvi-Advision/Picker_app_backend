@@ -251,7 +251,7 @@ exports.getOrderDelivery = async (req, res) => {
 
 exports.listDeliveries = async (req, res) => {
   try {
-    const { delivery_status, store_code, delivery_date, delivery_slot, project_code } = req.query;
+    const { delivery_status, store_code, delivery_date, delivery_slot, project_code, order_id } = req.query;
     const filter = {
       status: "completed",
       delivery_status: { $nin: [null, ""] },
@@ -261,6 +261,11 @@ exports.listDeliveries = async (req, res) => {
     if (store_code) filter.store_code = store_code.toUpperCase();
     if (delivery_date) filter.delivery_date = delivery_date;
     if (delivery_slot) filter.delivery_slot = delivery_slot;
+
+    if (order_id && order_id.trim()) {
+      const n = Number(order_id.trim());
+      filter.orders_idorders = Number.isFinite(n) ? n : -1;
+    }
 
     if (delivery_status) {
       const statusMap = { ready: "ready_for_delivery", out: "out_for_delivery" };

@@ -25,6 +25,8 @@ async function findRiderForStore({ rider_id, rider_email, storeCode, projectCode
  */
 async function assignRiderToOrder({
   orders_idorders,
+  store_code,
+  project_code,
   rider_id,
   rider_email,
   use_round_robin = false,
@@ -44,6 +46,18 @@ async function assignRiderToOrder({
   const order = await Order.findOne({ orders_idorders: orderId });
   if (!order) {
     return { error: "Order not found", status: 404 };
+  }
+
+  const storeCode = String(store_code || order.store_code).toUpperCase();
+  const projectCode = String(project_code || order.project_code).toUpperCase();
+
+  if (store_code || project_code) {
+    if (order.store_code !== storeCode || order.project_code !== projectCode) {
+      return {
+        error: "store_code/project_code do not match order record",
+        status: 400,
+      };
+    }
   }
 
   if (order.status === "cancelled" || order.delivery_status === "cancelled") {
@@ -124,7 +138,7 @@ async function assignRiderToOrder({
   let roundRobinMeta = null;
 
   if (use_round_robin) {
-    const picked = await pickNextRider(order.store_code, order.project_code);
+    const picked = await pickNextRider(storeCode, projectCode);
     if (picked.error) {
       return { error: picked.error, status: picked.status || 404 };
     }
@@ -132,8 +146,8 @@ async function assignRiderToOrder({
     roundRobinMeta = {
       rider_index: picked.rider_index,
       riders_in_pool: picked.riders_in_pool,
-      store_code: order.store_code,
-      project_code: order.project_code,
+      store_code: storeCode,
+      project_code: projectCode,
     };
   } else {
     if (!rider_id && !rider_email) {
@@ -142,8 +156,8 @@ async function assignRiderToOrder({
     rider = await findRiderForStore({
       rider_id,
       rider_email,
-      storeCode: order.store_code,
-      projectCode: order.project_code,
+      storeCode,
+      projectCode,
     });
     if (!rider) {
       return { error: "Rider not found for this store and project", status: 404 };

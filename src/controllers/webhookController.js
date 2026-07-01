@@ -298,7 +298,7 @@ exports.cancelOrder = async (req, res) => {
  * POST /api/webhook/order/assign-rider
  * Upstream admin accepted the order — round-robin assign to a rider for that order's store + project.
  *
- * Body: orders_idorders (required)
+ * Body: orders_idorders, store_code, project_code (required)
  * Optional: latitude, longitude, prepare_order, replace_active
  * Optional override: rider_id or rider_email (skips round-robin)
  */
@@ -309,6 +309,8 @@ exports.assignRider = async (req, res) => {
 
   const {
     orders_idorders: rawId,
+    store_code,
+    project_code,
     rider_id,
     rider_email,
     latitude,
@@ -323,8 +325,55 @@ exports.assignRider = async (req, res) => {
     return res.status(400).json({ success: false, message: "orders_idorders is required" });
   }
 
+  if (!store_code || !project_code) {
+    await log({
+      status: "validation_failed",
+      event_type,
+      orders_idorders,
+      error_message: "store_code and project_code are required",
+      caller_ip: ip,
+    });
+    return res.status(400).json({ success: false, message: "store_code and project_code are required" });
+  }
+
+  const storeCode = String(store_code).toUpperCase();
+  const projectCode = String(project_code).toUpperCase();
+
   try {
     const existing = await Order.findOne({ orders_idorders }).lean();
+    if (!existing) {
+      await log({
+        status: "error",
+        event_type,
+        orders_idorders,
+        store_code: storeCode,
+        project_code: projectCode,
+        error_message: "Order not found",
+        caller_ip: ip,
+      });
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    if (existing.store_code !== storeCode || existing.project_code !== projectCode) {
+      await log({
+        status: "validation_failed",
+        event_type,
+        orders_idorders,
+        store_code: storeCode,
+        project_code: projectCode,
+        error_message: "store_code/project_code do not match order record",
+        caller_ip: ip,
+        metadata: {
+          order_store_code: existing.store_code,
+          order_project_code: existing.project_code,
+        },
+      });
+      return res.status(400).json({
+        success: false,
+        message: "store_code/project_code do not match order record",
+      });
+    }
+
     const shouldPrepare =
       prepare_order !== false && (!existing || existing.status !== "completed");
 
@@ -332,6 +381,8 @@ exports.assignRider = async (req, res) => {
 
     const result = await assignRiderToOrder({
       orders_idorders,
+      store_code: storeCode,
+      project_code: projectCode,
       rider_id,
       rider_email,
       use_round_robin: useRoundRobin,
@@ -346,8 +397,8 @@ exports.assignRider = async (req, res) => {
         status: "error",
         event_type,
         orders_idorders,
-        store_code: existing?.store_code || null,
-        project_code: existing?.project_code || null,
+        store_code: storeCode,
+        project_code: projectCode,
         error_message: result.error,
         caller_ip: ip,
         metadata: { use_round_robin: useRoundRobin },
@@ -359,8 +410,8 @@ exports.assignRider = async (req, res) => {
       status: "success",
       event_type,
       orders_idorders,
-      store_code: result.order?.store_code || null,
-      project_code: result.order?.project_code || null,
+      store_code: storeCode,
+      project_code: projectCode,
       assigned: true,
       caller_ip: ip,
       metadata: {
@@ -375,6 +426,8 @@ exports.assignRider = async (req, res) => {
     return res.status(201).json({
       success: true,
       orders_idorders,
+      store_code: storeCode,
+      project_code: projectCode,
       rider_assigned: true,
       round_robin: result.round_robin || null,
       data: {
@@ -384,7 +437,15 @@ exports.assignRider = async (req, res) => {
       },
     });
   } catch (err) {
-    await log({ status: "error", event_type, orders_idorders, error_message: err.message, caller_ip: ip });
+    await log({
+      status: "error",
+      event_type,
+      orders_idorders,
+      store_code: store_code ? String(store_code).toUpperCase() : null,
+      project_code: project_code ? String(project_code).toUpperCase() : null,
+      error_message: err.message,
+      caller_ip: ip,
+    });
     console.error("[webhook] assign-rider failed:", err.message);
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
