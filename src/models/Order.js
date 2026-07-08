@@ -47,6 +47,15 @@ const orderSchema = new mongoose.Schema(
     // MAX_DELIVERY_ATTEMPTS; further re-attempts are blocked once reached.
     delivery_attempts: { type: Number, default: 0 },
     synced_at: { type: Date, default: Date.now },
+    // Outbox for notifying the upstream e-commerce system on delivery.
+    // Set to pending when delivery_status becomes "delivered"; the sync
+    // worker posts to RIDER_DELIVERED_API_URL until synced or max attempts.
+    upstream_sync: {
+      status: { type: String, enum: ["pending", "synced", "failed"], default: null },
+      attempts: { type: Number, default: 0 },
+      last_error: { type: String, default: null },
+      synced_at: { type: Date, default: null },
+    },
   },
   { timestamps: true }
 );
@@ -54,5 +63,6 @@ const orderSchema = new mongoose.Schema(
 orderSchema.index({ store_code: 1, status: 1 });
 orderSchema.index({ store_code: 1, delivery_status: 1 });
 orderSchema.index({ sent_to_super_admin: 1, sent_to_super_admin_at: -1 });
+orderSchema.index({ "upstream_sync.status": 1 });
 
 module.exports = mongoose.model("Order", orderSchema, "orders");

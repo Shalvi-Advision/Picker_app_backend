@@ -12,7 +12,7 @@ const {
   onAssignmentStarted,
   onAssignmentFinished,
 } = require("../services/deliveryRouteService");
-const { notifyUpstreamDelivered } = require("../services/upstreamDeliveryService");
+const { syncDeliveredOrder } = require("../services/upstreamDeliveryService");
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 const {
   getStoreOrigin,
@@ -261,12 +261,16 @@ exports.completeDelivery = async (req, res) => {
 
     await Order.updateOne(
       { orders_idorders: assignment.orders_idorders },
-      { delivery_status: "delivered" }
+      {
+        delivery_status: "delivered",
+        upstream_sync: { status: "pending", attempts: 0, last_error: null, synced_at: null },
+      }
     );
 
     await onAssignmentFinished(assignment, "delivered");
-    notifyUpstreamDelivered(order, assignment, req.user).catch((e) =>
-      console.error("notifyUpstreamDelivered failed:", e.message)
+    // Immediate push; the background worker retries if this attempt fails.
+    syncDeliveredOrder(assignment.orders_idorders).catch((e) =>
+      console.error("syncDeliveredOrder failed:", e.message)
     );
 
     notifyManagersOfDeliveryEvent(assignment, "completed", req.user).catch((e) =>

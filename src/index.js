@@ -7,6 +7,7 @@ const morgan = require("morgan");
 const connectPickerDB = require("./config/pickerDB");
 const { initFirebase } = require("./config/firebase");
 const seedRolePermissions = require("./services/seedRolePermissions");
+const { startUpstreamSyncWorker } = require("./services/upstreamDeliveryService");
 
 const app = express();
 
@@ -44,6 +45,7 @@ const start = async () => {
   await connectPickerDB();
   initFirebase();
   await seedRolePermissions();
+  startUpstreamSyncWorker();
   app.listen(PORT, () => console.log(`Picker API running on port ${PORT}`));
 };
 
