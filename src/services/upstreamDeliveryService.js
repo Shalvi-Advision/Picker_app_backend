@@ -1,4 +1,5 @@
 const Order = require("../models/Order");
+const WebhookLog = require("../models/WebhookLog");
 
 /**
  * Syncs delivered orders to the upstream e-commerce system
@@ -21,6 +22,19 @@ const WORKER_BATCH_SIZE = 50;
 
 function apiUrl() {
   return process.env.RIDER_DELIVERED_API_URL;
+}
+
+/** Audit trail — every attempt lands in webhook_logs (admin > Webhook Logs). */
+function logAttempt(order, attempt, error) {
+  WebhookLog.create({
+    event_type: "rider_delivered",
+    orders_idorders: order.orders_idorders,
+    store_code: order.store_code,
+    project_code: order.project_code,
+    status: error ? "error" : "success",
+    error_message: error || null,
+    metadata: { direction: "outgoing", attempt, max_attempts: MAX_ATTEMPTS, api_url: apiUrl() },
+  }).catch((e) => console.error("[upstream-sync] log write failed:", e.message));
 }
 
 async function postRiderDelivered(order) {
@@ -76,6 +90,7 @@ async function syncDeliveredOrder(ordersIdorders) {
         $inc: { "upstream_sync.attempts": 1 },
       }
     );
+    logAttempt(order, (sync.attempts || 0) + 1, null);
     console.log(`[upstream-sync] order #${ordersIdorders} synced`);
     return { ok: true };
   } catch (err) {
@@ -90,6 +105,7 @@ async function syncDeliveredOrder(ordersIdorders) {
         $inc: { "upstream_sync.attempts": 1 },
       }
     );
+    logAttempt(order, attempts, err.message);
     console.error(
       `[upstream-sync] order #${ordersIdorders} attempt ${attempts}/${MAX_ATTEMPTS} failed: ${err.message}`
     );
