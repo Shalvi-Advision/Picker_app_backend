@@ -71,6 +71,11 @@ function scopeToProject(req, filter = {}) {
 // Only orders that have been explicitly sent up by a manager.
 const SENT_FILTER = { sent_to_super_admin: true };
 
+// order ids (orders_idorders) are unique per project only, so any in-memory map
+// keyed by an order id must also carry the project_code to avoid cross-project
+// collisions.
+const orderKey = (project_code, orders_idorders) => `${project_code}::${orders_idorders}`;
+
 // Fetch all order_items for the given order IDs in one query and group them by
 // orders_idorders, attaching each item's picker_status (from the latest
 // assignment) so embedded items match the standalone items endpoint.
@@ -85,9 +90,11 @@ const buildItemsMap = async (orderIds) => {
   ]);
 
   // Latest assignment per order (used to resolve picker item statuses).
+  // Keyed by (project_code, orders_idorders) — order ids are unique per project only.
   const latestAssignment = {};
   for (const a of assignments) {
-    if (!latestAssignment[a.orders_idorders]) latestAssignment[a.orders_idorders] = a;
+    const key = orderKey(a.project_code, a.orders_idorders);
+    if (!latestAssignment[key]) latestAssignment[key] = a;
   }
   const assignmentIds = Object.values(latestAssignment).map((a) => a._id);
 
@@ -96,9 +103,10 @@ const buildItemsMap = async (orderIds) => {
     : [];
   const statusByItemId = Object.fromEntries(itemStatuses.map((s) => [s.order_item_id, s]));
 
+  // Keyed by (project_code, orders_idorders) — order ids are unique per project only.
   const map = {};
   for (const item of items) {
-    (map[item.orders_idorders] ||= []).push({
+    (map[orderKey(item.project_code, item.orders_idorders)] ||= []).push({
       ...item,
       picker_status: statusByItemId[item._id] || null,
     });
@@ -207,23 +215,26 @@ exports.getOrders = async (req, res) => {
         .sort({ assigned_at: -1 }),
     ]);
 
+    // Maps keyed by (project_code, orders_idorders) — order ids are unique per project only.
     const assignmentsMap = {};
     for (const a of assignments) {
-      if (!assignmentsMap[a.orders_idorders]) assignmentsMap[a.orders_idorders] = a;
+      const key = orderKey(a.project_code, a.orders_idorders);
+      if (!assignmentsMap[key]) assignmentsMap[key] = a;
     }
 
     const deliveryMap = {};
     for (const a of deliveryAssignments) {
-      if (!deliveryMap[a.orders_idorders]) deliveryMap[a.orders_idorders] = a;
+      const key = orderKey(a.project_code, a.orders_idorders);
+      if (!deliveryMap[key]) deliveryMap[key] = a;
     }
 
     const itemsMap = await buildItemsMap(orderIds);
 
     const result = orders.map((o) => ({
       ...o.toObject(),
-      current_assignment: assignmentsMap[o.orders_idorders] || null,
-      current_delivery_assignment: deliveryMap[o.orders_idorders] || null,
-      items: itemsMap[o.orders_idorders] || [],
+      current_assignment: assignmentsMap[orderKey(o.project_code, o.orders_idorders)] || null,
+      current_delivery_assignment: deliveryMap[orderKey(o.project_code, o.orders_idorders)] || null,
+      items: itemsMap[orderKey(o.project_code, o.orders_idorders)] || [],
     }));
 
     res.json({ success: true, data: result });
@@ -235,7 +246,10 @@ exports.getOrders = async (req, res) => {
 exports.getOrderItems = async (req, res) => {
   try {
     const orderId = Number(req.params.orders_idorders);
-    const order = await Order.findOne({ orders_idorders: orderId });
+    // order ids are unique per project only — scope by the requested project when supplied.
+    const orderFilter = { orders_idorders: orderId };
+    if (req.query.project_code) orderFilter.project_code = req.query.project_code.toUpperCase();
+    const order = await Order.findOne(orderFilter);
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
@@ -244,11 +258,18 @@ exports.getOrderItems = async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    const assignment = await PickerAssignment.findOne({ orders_idorders: orderId }).sort({
+    // Scope child records to this order's project — order ids are unique per project only.
+    const assignment = await PickerAssignment.findOne({
+      project_code: order.project_code,
+      orders_idorders: orderId,
+    }).sort({
       assigned_at: -1,
     });
 
-    const items = await OrderItem.find({ orders_idorders: orderId });
+    const items = await OrderItem.find({
+      project_code: order.project_code,
+      orders_idorders: orderId,
+    });
 
     let statusMap = {};
     if (assignment) {
@@ -270,7 +291,10 @@ exports.getOrderItems = async (req, res) => {
 exports.getOrderDelivery = async (req, res) => {
   try {
     const orderId = Number(req.params.orders_idorders);
-    const order = await Order.findOne({ orders_idorders: orderId });
+    // order ids are unique per project only — scope by the requested project when supplied.
+    const orderFilter = { orders_idorders: orderId };
+    if (req.query.project_code) orderFilter.project_code = req.query.project_code.toUpperCase();
+    const order = await Order.findOne(orderFilter);
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
@@ -280,7 +304,11 @@ exports.getOrderDelivery = async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    const deliveryAssignment = await DeliveryAssignment.findOne({ orders_idorders: orderId })
+    // Scope to this order's project — order ids are unique per project only.
+    const deliveryAssignment = await DeliveryAssignment.findOne({
+      project_code: order.project_code,
+      orders_idorders: orderId,
+    })
       .sort({ assigned_at: -1 })
       .populate("rider_id", "name email phone rider_availability last_location")
       .populate("assigned_by", "name email");
@@ -338,14 +366,16 @@ exports.listDeliveries = async (req, res) => {
       .sort({ assigned_at: -1 })
       .populate("rider_id", "name email phone rider_availability last_location");
 
+    // Keyed by (project_code, orders_idorders) — order ids are unique per project only.
     const deliveryMap = {};
     for (const a of deliveryAssignments) {
-      if (!deliveryMap[a.orders_idorders]) deliveryMap[a.orders_idorders] = a;
+      const key = orderKey(a.project_code, a.orders_idorders);
+      if (!deliveryMap[key]) deliveryMap[key] = a;
     }
 
     const result = orders.map((o) => ({
       ...o.toObject(),
-      current_delivery_assignment: deliveryMap[o.orders_idorders] || null,
+      current_delivery_assignment: deliveryMap[orderKey(o.project_code, o.orders_idorders)] || null,
     }));
 
     res.json({ success: true, data: result });
@@ -493,23 +523,26 @@ exports.getAllOrders = async (req, res) => {
         .sort({ assigned_at: -1 }),
     ]);
 
+    // Maps keyed by (project_code, orders_idorders) — order ids are unique per project only.
     const assignmentsMap = {};
     for (const a of assignments) {
-      if (!assignmentsMap[a.orders_idorders]) assignmentsMap[a.orders_idorders] = a;
+      const key = orderKey(a.project_code, a.orders_idorders);
+      if (!assignmentsMap[key]) assignmentsMap[key] = a;
     }
 
     const deliveryMap = {};
     for (const a of deliveryAssignments) {
-      if (!deliveryMap[a.orders_idorders]) deliveryMap[a.orders_idorders] = a;
+      const key = orderKey(a.project_code, a.orders_idorders);
+      if (!deliveryMap[key]) deliveryMap[key] = a;
     }
 
     const itemsMap = await buildItemsMap(orderIds);
 
     const result = orders.map((o) => ({
       ...o.toObject(),
-      current_assignment: assignmentsMap[o.orders_idorders] || null,
-      current_delivery_assignment: deliveryMap[o.orders_idorders] || null,
-      items: itemsMap[o.orders_idorders] || [],
+      current_assignment: assignmentsMap[orderKey(o.project_code, o.orders_idorders)] || null,
+      current_delivery_assignment: deliveryMap[orderKey(o.project_code, o.orders_idorders)] || null,
+      items: itemsMap[orderKey(o.project_code, o.orders_idorders)] || [],
     }));
 
     res.json({ success: true, data: result });

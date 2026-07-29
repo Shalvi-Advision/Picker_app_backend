@@ -37,6 +37,11 @@ function generateOtp() {
   return String(Math.floor(1000 + Math.random() * 9000));
 }
 
+// Order ids (orders_idorders) are unique per project only, so any in-memory
+// map keyed by order id must be composited with project_code to avoid
+// cross-project collisions.
+const orderKey = (project_code, orders_idorders) => `${project_code}::${orders_idorders}`;
+
 const podDir = path.join(__dirname, "../../public/uploads/pod");
 fs.mkdirSync(podDir, { recursive: true });
 
@@ -95,12 +100,15 @@ exports.getMyDeliveries = async (req, res) => {
     const assignments = await DeliveryAssignment.find(filter).sort({ assigned_at: -1 });
     const orderIds = assignments.map((a) => a.orders_idorders);
     const orders = await Order.find({ orders_idorders: { $in: orderIds } });
-    const ordersMap = Object.fromEntries(orders.map((o) => [o.orders_idorders, o]));
+    // order ids are unique per project only — key the map by (project_code, order id).
+    const ordersMap = Object.fromEntries(
+      orders.map((o) => [orderKey(o.project_code, o.orders_idorders), o])
+    );
 
     const result = assignments.map((a) => ({
       ...a.toObject(),
       assignment_id: a._id,
-      order: ordersMap[a.orders_idorders] || null,
+      order: ordersMap[orderKey(a.project_code, a.orders_idorders)] || null,
     }));
 
     res.json({ success: true, data: result });
@@ -122,10 +130,17 @@ exports.getDeliveryDetail = async (req, res) => {
       return res.status(404).json({ success: false, message: "Delivery assignment not found" });
     }
 
-    const order = await Order.findOne({ orders_idorders: orderId });
+    // order ids are unique per project only — scope by the assignment's project.
+    const order = await Order.findOne({
+      orders_idorders: orderId,
+      project_code: assignment.project_code,
+    });
 
     // Line items the rider is carrying — read-only view (name, qty, price).
-    const items = await OrderItem.find({ orders_idorders: orderId })
+    const items = await OrderItem.find({
+      orders_idorders: orderId,
+      project_code: assignment.project_code,
+    })
       .select(
         "item_name product_description pack_size ordered_quantity " +
           "product_offer_price product_mrp total_amt_our_price"
@@ -166,8 +181,9 @@ exports.startDelivery = async (req, res) => {
       });
     }
 
+    // order ids are unique per project only — scope by the assignment's project.
     await Order.updateOne(
-      { orders_idorders: assignment.orders_idorders },
+      { orders_idorders: assignment.orders_idorders, project_code: assignment.project_code },
       { delivery_status: "out_for_delivery" }
     );
 
@@ -222,7 +238,11 @@ exports.completeDelivery = async (req, res) => {
       }
     }
 
-    const order = await Order.findOne({ orders_idorders: assignment.orders_idorders });
+    // order ids are unique per project only — scope by the assignment's project.
+    const order = await Order.findOne({
+      orders_idorders: assignment.orders_idorders,
+      project_code: assignment.project_code,
+    });
 
     // Geofence audit: measure how far the rider's POD GPS was from the saved
     // customer location. Record only (never block server-side) — the app gates
@@ -259,8 +279,9 @@ exports.completeDelivery = async (req, res) => {
       );
     }
 
+    // order ids are unique per project only — scope by the assignment's project.
     await Order.updateOne(
-      { orders_idorders: assignment.orders_idorders },
+      { orders_idorders: assignment.orders_idorders, project_code: assignment.project_code },
       {
         delivery_status: "delivered",
         upstream_sync: { status: "pending", attempts: 0, last_error: null, synced_at: null },
@@ -305,8 +326,9 @@ exports.failDelivery = async (req, res) => {
       return res.status(404).json({ success: false, message: "Assignment not found" });
     }
 
+    // order ids are unique per project only — scope by the assignment's project.
     await Order.updateOne(
-      { orders_idorders: assignment.orders_idorders },
+      { orders_idorders: assignment.orders_idorders, project_code: assignment.project_code },
       { delivery_status: "failed" }
     );
 
@@ -415,8 +437,13 @@ async function buildRiderRoutePayload(route, riderId) {
     Order.find({ orders_idorders: { $in: orderIds } }).lean(),
     DeliveryAssignment.find({ route_id: route._id, rider_id: riderId }).lean(),
   ]);
-  const ordersMap = Object.fromEntries(orders.map((o) => [o.orders_idorders, o]));
-  const assignMap = Object.fromEntries(assignments.map((a) => [a.orders_idorders, a]));
+  // order ids are unique per project only — key maps by (project_code, order id).
+  const ordersMap = Object.fromEntries(
+    orders.map((o) => [orderKey(o.project_code, o.orders_idorders), o])
+  );
+  const assignMap = Object.fromEntries(
+    assignments.map((a) => [orderKey(a.project_code, a.orders_idorders), a])
+  );
 
   const origin = await getStoreOrigin(route.project_code, route.store_code);
   const coordStops = route.stops
@@ -440,8 +467,8 @@ async function buildRiderRoutePayload(route, riderId) {
       .sort((a, b) => a.sequence - b.sequence)
       .map((s) => ({
         ...(s.toObject ? s.toObject() : s),
-        order: ordersMap[s.orders_idorders] || null,
-        assignment: assignMap[s.orders_idorders] || null,
+        order: ordersMap[orderKey(route.project_code, s.orders_idorders)] || null,
+        assignment: assignMap[orderKey(route.project_code, s.orders_idorders)] || null,
       })),
     pending_stops: pendingCount,
     current_stop: currentStop || null,
@@ -487,7 +514,11 @@ exports.getRoute = async (req, res) => {
 };
 
 async function notifyManagersOfDeliveryEvent(assignment, event, rider, reason) {
-  const order = await Order.findOne({ orders_idorders: assignment.orders_idorders });
+  // order ids are unique per project only — scope by the assignment's project.
+  const order = await Order.findOne({
+    orders_idorders: assignment.orders_idorders,
+    project_code: assignment.project_code,
+  });
   if (!order) return;
 
   const managers = await PickerUser.find({
@@ -608,17 +639,21 @@ exports.startMyRoute = async (req, res) => {
     });
 
     // Link the existing assignments to this route in their optimized sequence.
-    const assignByOrder = Object.fromEntries(pending.map((a) => [a.orders_idorders, a]));
+    // order ids are unique per project only — the route (and its stops) belong to
+    // projectCode, so key the map and scope updates by it.
+    const assignByOrder = Object.fromEntries(
+      pending.map((a) => [orderKey(a.project_code, a.orders_idorders), a])
+    );
     for (let i = 0; i < ordered.length; i++) {
       const stop = ordered[i];
-      const a = assignByOrder[stop.orders_idorders];
+      const a = assignByOrder[orderKey(projectCode, stop.orders_idorders)];
       if (!a) continue;
       await DeliveryAssignment.updateOne(
         { _id: a._id },
         { route_id: route._id, stop_sequence: i + 1 }
       );
       await Order.updateOne(
-        { orders_idorders: stop.orders_idorders },
+        { orders_idorders: stop.orders_idorders, project_code: projectCode },
         { current_route_id: route._id }
       );
     }

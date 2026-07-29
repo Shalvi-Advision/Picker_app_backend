@@ -16,6 +16,11 @@ const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 // failed attempts the order is locked and cannot be re-attempted.
 const MAX_DELIVERY_ATTEMPTS = 3;
 
+// orders_idorders is unique only WITHIN a project_code — different projects
+// legitimately reuse the same numeric id. Any in-memory map keyed by the
+// numeric id alone can collide across projects, so key by this composite.
+const orderKey = (project_code, orders_idorders) => `${project_code}::${orders_idorders}`;
+
 const {
   MIN_STOPS,
   MAX_STOPS,
@@ -41,9 +46,11 @@ const buildItemsMap = async (orderIds) => {
     itemStatuses.map((s) => [s.order_item_id, s])
   );
 
+  // Key by (project_code, orders_idorders): order ids are unique per project only.
   const map = {};
   for (const item of items) {
-    (map[item.orders_idorders] ||= []).push({
+    const key = orderKey(item.project_code, item.orders_idorders);
+    (map[key] ||= []).push({
       ...item,
       picker_status: statusByItemId[String(item._id)] || null,
     });
@@ -71,24 +78,31 @@ exports.getAllOrders = async (req, res) => {
         .sort({ assigned_at: -1 }),
     ]);
 
+    // Key every map by (project_code, orders_idorders): order ids are unique
+    // per project only, so keying by the numeric id alone collides across projects.
     const assignmentsMap = {};
     for (const a of assignments) {
-      if (!assignmentsMap[a.orders_idorders]) assignmentsMap[a.orders_idorders] = a;
+      const key = orderKey(a.project_code, a.orders_idorders);
+      if (!assignmentsMap[key]) assignmentsMap[key] = a;
     }
 
     const deliveryMap = {};
     for (const a of deliveryAssignments) {
-      if (!deliveryMap[a.orders_idorders]) deliveryMap[a.orders_idorders] = a;
+      const key = orderKey(a.project_code, a.orders_idorders);
+      if (!deliveryMap[key]) deliveryMap[key] = a;
     }
 
     const itemsMap = await buildItemsMap(orderIds);
 
-    const result = orders.map((o) => ({
-      ...o.toObject(),
-      current_assignment: assignmentsMap[o.orders_idorders] || null,
-      current_delivery_assignment: deliveryMap[o.orders_idorders] || null,
-      items: itemsMap[o.orders_idorders] || [],
-    }));
+    const result = orders.map((o) => {
+      const key = orderKey(o.project_code, o.orders_idorders);
+      return {
+        ...o.toObject(),
+        current_assignment: assignmentsMap[key] || null,
+        current_delivery_assignment: deliveryMap[key] || null,
+        items: itemsMap[key] || [],
+      };
+    });
 
     res.json({ success: true, data: result });
   } catch (err) {
@@ -270,10 +284,13 @@ exports.getOrderItems = async (req, res) => {
     const rawLimit = parseInt(req.query.limit);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(200, rawLimit) : 0;
 
+    // No project_code in the request; scope the order lookup by the manager's
+    // stores. order ids are unique per project only.
     const order = await Order.findOne({ orders_idorders: orderId, store_code: { $in: req.user.store_codes } });
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
 
-    const filter = { orders_idorders: orderId };
+    // Once the order is known, its project_code is the reliable scope for items.
+    const filter = { orders_idorders: orderId, project_code: order.project_code };
     const total = await OrderItem.countDocuments(filter);
 
     let query = OrderItem.find(filter);
@@ -282,6 +299,9 @@ exports.getOrderItems = async (req, res) => {
     }
 
     const items = await query;
+    // TODO: project_code not available here — PickerItemStatus has no project_code
+    // field. Safe because statusMap is keyed by order_item_id, which is globally
+    // unique, and items above are already project-scoped.
     const itemStatuses = await PickerItemStatus.find({ orders_idorders: orderId });
     const statusMap = Object.fromEntries(itemStatuses.map((s) => [s.order_item_id, s]));
 
@@ -315,7 +335,17 @@ exports.triggerAssignment = async (req, res) => {
 exports.sendOrderToSuperAdmin = async (req, res) => {
   try {
     const orderId = Number(req.params.orders_idorders);
-    const order = await Order.findOne({ orders_idorders: orderId });
+    // order ids are unique per project only. Use project_code from the request
+    // when supplied; otherwise scope by the manager's stores.
+    const projectCode = req.body.project_code || req.query.project_code;
+    const orderQuery = { orders_idorders: orderId };
+    if (projectCode) {
+      orderQuery.project_code = projectCode;
+    } else {
+      // TODO: project_code not available here — fall back to store scoping.
+      orderQuery.store_code = { $in: req.user.store_codes };
+    }
+    const order = await Order.findOne(orderQuery);
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
@@ -463,11 +493,14 @@ exports.getRider = async (req, res) => {
 
     const orderIds = recentDeliveries.map((d) => d.orders_idorders);
     const orders = await Order.find({ orders_idorders: { $in: orderIds } }).lean();
-    const ordersMap = Object.fromEntries(orders.map((o) => [o.orders_idorders, o]));
+    // Key by (project_code, orders_idorders): order ids are unique per project only.
+    const ordersMap = Object.fromEntries(
+      orders.map((o) => [orderKey(o.project_code, o.orders_idorders), o])
+    );
 
     const deliveries = recentDeliveries.map((d) => ({
       ...d,
-      order: ordersMap[d.orders_idorders] || null,
+      order: ordersMap[orderKey(d.project_code, d.orders_idorders)] || null,
     }));
 
     res.json({ success: true, data: { rider, deliveries } });
@@ -479,7 +512,17 @@ exports.getRider = async (req, res) => {
 exports.assignRider = async (req, res) => {
   try {
     const orderId = Number(req.params.orders_idorders);
-    const order = await Order.findOne({ orders_idorders: orderId });
+    // order ids are unique per project only. Use project_code from the request
+    // when supplied; otherwise scope by the manager's stores.
+    const projectCode = req.body.project_code || req.query.project_code;
+    const orderQuery = { orders_idorders: orderId };
+    if (projectCode) {
+      orderQuery.project_code = projectCode;
+    } else {
+      // TODO: project_code not available here — fall back to store scoping.
+      orderQuery.store_code = { $in: req.user.store_codes };
+    }
+    const order = await Order.findOne(orderQuery);
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
@@ -516,7 +559,17 @@ exports.reassignRider = async (req, res) => {
       return res.status(400).json({ success: false, message: "new_rider_id is required" });
     }
 
-    const order = await Order.findOne({ orders_idorders: orderId });
+    // order ids are unique per project only. Use project_code from the request
+    // when supplied; otherwise scope by the manager's stores.
+    const projectCode = req.body.project_code || req.query.project_code;
+    const orderQuery = { orders_idorders: orderId };
+    if (projectCode) {
+      orderQuery.project_code = projectCode;
+    } else {
+      // TODO: project_code not available here — fall back to store scoping.
+      orderQuery.store_code = { $in: req.user.store_codes };
+    }
+    const order = await Order.findOne(orderQuery);
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
@@ -524,8 +577,10 @@ exports.reassignRider = async (req, res) => {
       return res.status(403).json({ success: false, message: "Order is outside your stores" });
     }
 
+    // Now the order is known, its project_code is the reliable scope for assignments.
     const current = await DeliveryAssignment.findOne({
       orders_idorders: orderId,
+      project_code: order.project_code,
       status: { $in: ["assigned", "out_for_delivery"] },
     });
     if (!current) {
@@ -558,7 +613,8 @@ exports.reassignRider = async (req, res) => {
     });
 
     await Order.updateOne(
-      { orders_idorders: orderId },
+      // order ids are unique per project only.
+      { orders_idorders: orderId, project_code: order.project_code },
       {
         delivery_status: "assigned",
         current_delivery_assignment_id: assignment._id,
