@@ -22,7 +22,12 @@ exports.getMyOrders = async (req, res) => {
 
     const orderIds = assignments.map((a) => a.orders_idorders);
     const orders = await Order.find({ orders_idorders: { $in: orderIds } });
-    const ordersMap = Object.fromEntries(orders.map((o) => [o.orders_idorders, o]));
+    // Key by (project_code, orders_idorders) — an order id is unique per project
+    // only, so keying by id alone would attach the wrong project's order.
+    const orderKey = (project_code, orders_idorders) => `${project_code}::${orders_idorders}`;
+    const ordersMap = Object.fromEntries(
+      orders.map((o) => [orderKey(o.project_code, o.orders_idorders), o])
+    );
 
     const result = assignments.map((a) => ({
       _id: a._id,
@@ -34,7 +39,7 @@ exports.getMyOrders = async (req, res) => {
       assigned_at: a.assigned_at,
       completed_at: a.completed_at,
       rejected_reason: a.rejected_reason,
-      order: ordersMap[a.orders_idorders] || null,
+      order: ordersMap[orderKey(a.project_code, a.orders_idorders)] || null,
     }));
 
     res.json({ success: true, data: result });
@@ -102,7 +107,11 @@ exports.startPicking = async (req, res) => {
       return res.status(404).json({ success: false, message: "Assignment not found or already started" });
     }
 
-    await Order.updateOne({ orders_idorders: Number(orders_idorders) }, { status: "in_progress" });
+    // Scope by the assignment's project — order ids are unique per project only.
+    await Order.updateOne(
+      { orders_idorders: Number(orders_idorders), project_code: assignment.project_code },
+      { status: "in_progress" }
+    );
 
     res.json({ success: true, data: assignment });
   } catch (err) {
@@ -159,12 +168,12 @@ exports.completeOrder = async (req, res) => {
     }
 
     await Order.updateOne(
-      { orders_idorders: Number(orders_idorders) },
+      { orders_idorders: Number(orders_idorders), project_code: assignment.project_code },
       { status: "completed", delivery_status: "ready_for_delivery" }
     );
 
     // Fire-and-forget: notify managers of the store that the order is complete.
-    notifyManagersOfCompletedOrder(Number(orders_idorders), req.user).catch((e) =>
+    notifyManagersOfCompletedOrder(Number(orders_idorders), assignment.project_code, req.user).catch((e) =>
       console.error("notifyManagersOfCompletedOrder failed:", e.message)
     );
 
@@ -174,9 +183,9 @@ exports.completeOrder = async (req, res) => {
   }
 };
 
-async function notifyManagersOfCompletedOrder(ordersIdorders, picker) {
+async function notifyManagersOfCompletedOrder(ordersIdorders, projectCode, picker) {
   const { sendToUser } = require("../services/notificationService");
-  const order = await Order.findOne({ orders_idorders: ordersIdorders });
+  const order = await Order.findOne({ orders_idorders: ordersIdorders, project_code: projectCode });
   if (!order) return;
 
   const managers = await PickerUser.find({
@@ -309,9 +318,12 @@ exports.rejectOrder = async (req, res) => {
       return res.status(404).json({ success: false, message: "Assignment not found" });
     }
 
-    await Order.updateOne({ orders_idorders: Number(orders_idorders) }, { status: "pending" });
+    await Order.updateOne(
+      { orders_idorders: Number(orders_idorders), project_code: assignment.project_code },
+      { status: "pending" }
+    );
 
-    notifyManagersOfRejectedOrder(Number(orders_idorders), req.user, reason).catch((e) =>
+    notifyManagersOfRejectedOrder(Number(orders_idorders), assignment.project_code, req.user, reason).catch((e) =>
       console.error("notifyManagersOfRejectedOrder failed:", e.message)
     );
 
@@ -321,9 +333,9 @@ exports.rejectOrder = async (req, res) => {
   }
 };
 
-async function notifyManagersOfRejectedOrder(ordersIdorders, picker, reason) {
+async function notifyManagersOfRejectedOrder(ordersIdorders, projectCode, picker, reason) {
   const { sendToUser } = require("../services/notificationService");
-  const order = await Order.findOne({ orders_idorders: ordersIdorders });
+  const order = await Order.findOne({ orders_idorders: ordersIdorders, project_code: projectCode });
   if (!order) return;
 
   const managers = await PickerUser.find({

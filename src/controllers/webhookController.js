@@ -111,7 +111,11 @@ exports.receiveOrder = async (req, res) => {
     return res.status(400).json({ success: false, message: "orders_idorders must be a number" });
   }
 
-  const existing = await Order.findOne({ orders_idorders }).lean();
+  // An order id is only unique within a project. Scope the duplicate check by
+  // project_code so an order from a different project that happens to share the
+  // same id is NOT skipped as a duplicate.
+  const projectCode = String(project_code).toUpperCase();
+  const existing = await Order.findOne({ orders_idorders, project_code: projectCode }).lean();
   if (existing) {
     await log({ status: "skipped", event_type, orders_idorders, store_code, project_code, items_count: items.length, caller_ip: ip });
     return res.json({
@@ -239,7 +243,7 @@ exports.cancelOrder = async (req, res) => {
   const event_type = "order_cancel";
   if (!(await verifyWebhookAuth(req, res, ip, event_type))) return;
 
-  const { orders_idorders: rawId, reason } = req.body;
+  const { orders_idorders: rawId, project_code, reason } = req.body;
   const orders_idorders = parseOrderId(rawId);
 
   if (!orders_idorders) {
@@ -247,8 +251,13 @@ exports.cancelOrder = async (req, res) => {
     return res.status(400).json({ success: false, message: "orders_idorders is required" });
   }
 
+  // project_code is optional for backward compatibility, but STRONGLY preferred:
+  // order ids are only unique within a project, so without it a same-id order
+  // from another project could be cancelled. Pass it through when supplied.
+  const projectCode = project_code ? String(project_code).toUpperCase() : null;
+
   try {
-    const result = await cancelOrderFromUpstream({ orders_idorders, reason });
+    const result = await cancelOrderFromUpstream({ orders_idorders, project_code: projectCode, reason });
 
     if (result.error) {
       await log({
@@ -340,7 +349,8 @@ exports.assignRider = async (req, res) => {
   const projectCode = String(project_code).toUpperCase();
 
   try {
-    const existing = await Order.findOne({ orders_idorders }).lean();
+    // Scope by project_code: the same order id can exist in another project.
+    const existing = await Order.findOne({ orders_idorders, project_code: projectCode }).lean();
     if (!existing) {
       await log({
         status: "error",
@@ -354,14 +364,14 @@ exports.assignRider = async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    if (existing.store_code !== storeCode || existing.project_code !== projectCode) {
+    if (existing.store_code !== storeCode) {
       await log({
         status: "validation_failed",
         event_type,
         orders_idorders,
         store_code: storeCode,
         project_code: projectCode,
-        error_message: "store_code/project_code do not match order record",
+        error_message: "store_code does not match order record",
         caller_ip: ip,
         metadata: {
           order_store_code: existing.store_code,
@@ -370,7 +380,7 @@ exports.assignRider = async (req, res) => {
       });
       return res.status(400).json({
         success: false,
-        message: "store_code/project_code do not match order record",
+        message: "store_code does not match order record",
       });
     }
 

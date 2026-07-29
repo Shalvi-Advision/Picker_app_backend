@@ -2,7 +2,10 @@ const mongoose = require("mongoose");
 
 const orderSchema = new mongoose.Schema(
   {
-    orders_idorders: { type: Number, required: true, unique: true },
+    // NOTE: orders_idorders is only unique WITHIN a project. Different projects
+    // legitimately reuse the same numeric order id, so uniqueness is enforced by
+    // the compound (project_code, orders_idorders) index below — not here.
+    orders_idorders: { type: Number, required: true },
     store_code: { type: String, required: true },
     project_code: { type: String, required: true },
     order_date: { type: Date },
@@ -60,6 +63,8 @@ const orderSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// True identity of an order: an order id is unique per project, NOT globally.
+orderSchema.index({ project_code: 1, orders_idorders: 1 }, { unique: true });
 orderSchema.index({ store_code: 1, status: 1 });
 orderSchema.index({ store_code: 1, delivery_status: 1 });
 orderSchema.index({ sent_to_super_admin: 1, sent_to_super_admin_at: -1 });

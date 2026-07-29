@@ -43,7 +43,11 @@ async function assignRiderToOrder({
     return { error: "orders_idorders must be a number", status: 400 };
   }
 
-  const order = await Order.findOne({ orders_idorders: orderId });
+  // Order ids are unique per project — scope by project_code when the caller
+  // supplied one so we never pick up a same-id order from another project.
+  const orderQuery = { orders_idorders: orderId };
+  if (project_code) orderQuery.project_code = String(project_code).toUpperCase();
+  const order = await Order.findOne(orderQuery);
   if (!order) {
     return { error: "Order not found", status: 404 };
   }
@@ -60,12 +64,16 @@ async function assignRiderToOrder({
     }
   }
 
+  // All subsequent order writes must target THIS project's order only —
+  // order ids are not globally unique.
+  const orderScope = { orders_idorders: orderId, project_code: order.project_code };
+
   if (order.status === "cancelled" || order.delivery_status === "cancelled") {
     if (!reopen_cancelled) {
       return { error: "Order is cancelled — set reopen_cancelled to assign again", status: 409 };
     }
     await Order.updateOne(
-      { orders_idorders: orderId },
+      orderScope,
       { status: "completed", delivery_status: "ready_for_delivery" }
     );
     order.status = "completed";
@@ -81,7 +89,7 @@ async function assignRiderToOrder({
     else if (!order.latitude) orderUpdate.latitude = "19.0760";
     if (longitude != null) orderUpdate.longitude = String(longitude);
     else if (!order.longitude) orderUpdate.longitude = "72.8777";
-    await Order.updateOne({ orders_idorders: orderId }, orderUpdate);
+    await Order.updateOne(orderScope, orderUpdate);
     Object.assign(order, orderUpdate);
   }
 
@@ -106,7 +114,7 @@ async function assignRiderToOrder({
     );
     if (["assigned", "out_for_delivery"].includes(order.delivery_status)) {
       await Order.updateOne(
-        { orders_idorders: orderId },
+        orderScope,
         { delivery_status: "ready_for_delivery", current_delivery_assignment_id: null, current_route_id: null }
       );
       order.delivery_status = "ready_for_delivery";
@@ -174,7 +182,7 @@ async function assignRiderToOrder({
   });
 
   await Order.updateOne(
-    { orders_idorders: orderId },
+    orderScope,
     {
       $set: {
         delivery_status: "assigned",

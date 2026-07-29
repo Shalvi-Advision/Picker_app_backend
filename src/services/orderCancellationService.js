@@ -12,6 +12,7 @@ const { syncRouteProgress } = require("./deliveryRouteService");
  */
 async function cancelOrderFromUpstream({
   orders_idorders,
+  project_code,
   reason = "Cancelled by upstream system",
   notify = true,
 }) {
@@ -20,7 +21,15 @@ async function cancelOrderFromUpstream({
     return { error: "orders_idorders must be a number", status: 400 };
   }
 
-  const order = await Order.findOne({ orders_idorders: orderId });
+  // Order ids are unique per project, not globally. When the caller passes a
+  // project_code, scope every lookup/update to it so we never cancel the
+  // wrong project's order that happens to share the same id.
+  const projectCode = project_code ? String(project_code).toUpperCase() : null;
+  const orderScope = projectCode
+    ? { orders_idorders: orderId, project_code: projectCode }
+    : { orders_idorders: orderId };
+
+  const order = await Order.findOne(orderScope);
   if (!order) {
     return { error: "Order not found", status: 404 };
   }
@@ -31,23 +40,29 @@ async function cancelOrderFromUpstream({
 
   const cancelReason = String(reason || "Cancelled by upstream system").trim();
 
+  // Resolve the definitive project of this order and scope all child-record
+  // operations to it so we never touch another project's same-id records.
+  const orderProject = order.project_code;
+
   const activePickerAssignments = await PickerAssignment.find({
     orders_idorders: orderId,
+    project_code: orderProject,
     status: { $in: ["assigned", "in_progress"] },
   }).lean();
 
   await PickerAssignment.updateMany(
-    { orders_idorders: orderId, status: { $in: ["assigned", "in_progress"] } },
+    { orders_idorders: orderId, project_code: orderProject, status: { $in: ["assigned", "in_progress"] } },
     { status: "cancelled", rejected_reason: cancelReason }
   );
 
   const activeDeliveries = await DeliveryAssignment.find({
     orders_idorders: orderId,
+    project_code: orderProject,
     status: { $in: ["assigned", "out_for_delivery"] },
   }).lean();
 
   await DeliveryAssignment.updateMany(
-    { orders_idorders: orderId, status: { $in: ["assigned", "out_for_delivery"] } },
+    { orders_idorders: orderId, project_code: orderProject, status: { $in: ["assigned", "out_for_delivery"] } },
     { status: "cancelled", failed_reason: cancelReason }
   );
 
@@ -57,14 +72,17 @@ async function cancelOrderFromUpstream({
 
   for (const routeId of routeIds) {
     await DeliveryRoute.updateOne(
-      { _id: routeId, "stops.orders_idorders": orderId },
+      {
+        _id: routeId,
+        stops: { $elemMatch: { orders_idorders: orderId, project_code: orderProject } },
+      },
       { $set: { "stops.$.status": "cancelled" } }
     );
     await syncRouteProgress(routeId);
   }
 
   await Order.updateOne(
-    { orders_idorders: orderId },
+    { orders_idorders: orderId, project_code: orderProject },
     {
       status: "cancelled",
       delivery_status: "cancelled",
@@ -124,7 +142,7 @@ async function cancelOrderFromUpstream({
     ).catch(() => {});
   }
 
-  const updated = await Order.findOne({ orders_idorders: orderId }).lean();
+  const updated = await Order.findOne({ orders_idorders: orderId, project_code: orderProject }).lean();
   return {
     order: updated,
     picker_assignments_cancelled: activePickerAssignments.length,

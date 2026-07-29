@@ -48,7 +48,7 @@ const assignOrder = async (orders_idorders, store_code, project_code, assigned_b
     { last_assigned_picker_index: nextIndex, updated_at: new Date() }
   );
 
-  await Order.updateOne({ orders_idorders }, { status: "assigned" });
+  await Order.updateOne({ orders_idorders, project_code }, { status: "assigned" });
 
   const [pickerUser, storeManagers] = await Promise.all([
     PickerUser.findById(assignedTo).select("name"),
@@ -107,7 +107,10 @@ const reassignOrder = async (orders_idorders, new_picker_id, manager_id) => {
   });
 
   // Push order back to "assigned" since it now has an active picker
-  await Order.updateOne({ orders_idorders }, { status: "assigned" });
+  await Order.updateOne(
+    { orders_idorders, project_code: current.project_code },
+    { status: "assigned" }
+  );
 
   const [newPickerUser, storeManagers] = await Promise.all([
     PickerUser.findById(new_picker_id).select("name"),
