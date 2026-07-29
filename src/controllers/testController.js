@@ -98,11 +98,12 @@ exports.createTestOrder = async (req, res) => {
       ordersIdorders = (last?.orders_idorders || 90000) + 1;
     }
 
-    const existing = await Order.findOne({ orders_idorders: ordersIdorders });
+    // Order ids are unique per project only — scope the existence check by project.
+    const existing = await Order.findOne({ orders_idorders: ordersIdorders, project_code: projectCode });
     if (existing) {
       return res.status(409).json({
         success: false,
-        message: `Order #${ordersIdorders} already exists`,
+        message: `Order #${ordersIdorders} already exists in project ${projectCode}`,
       });
     }
 

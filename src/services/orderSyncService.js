@@ -188,8 +188,11 @@ const upsertOrders = async (project_code = PROJECT_CODE) => {
 
   // Don't touch orders a picker has already started — replacing their items
   // would wipe in-flight picking. Only pending (or brand-new) orders are synced.
+  // Scope by project_code: order ids are unique per project only, so a same-id
+  // order in another project must not lock/skip this project's order.
   const incomingIds = orders.map((o) => o.orders_idorders);
   const lockedOrders = await Order.find({
+    project_code,
     orders_idorders: { $in: incomingIds },
     status: { $ne: "pending" },
   })
@@ -211,8 +214,10 @@ const upsertOrders = async (project_code = PROJECT_CODE) => {
     }
 
     const { status, synced_at, ...fields } = order;
+    // Upsert on the true identity (project_code + orders_idorders) so we never
+    // overwrite another project's order and the filter matches the unique index.
     const res = await Order.updateOne(
-      { orders_idorders: order.orders_idorders },
+      { orders_idorders: order.orders_idorders, project_code },
       { $set: { ...fields, synced_at }, $setOnInsert: { status } },
       { upsert: true }
     );
@@ -222,7 +227,7 @@ const upsertOrders = async (project_code = PROJECT_CODE) => {
 
     // Replace this order's items wholesale so every upstream row is its own doc.
     const orderItems = itemsByOrder[order.orders_idorders] || [];
-    await OrderItem.deleteMany({ orders_idorders: order.orders_idorders });
+    await OrderItem.deleteMany({ orders_idorders: order.orders_idorders, project_code });
     if (orderItems.length) await OrderItem.insertMany(orderItems);
     itemsWritten += orderItems.length;
 
