@@ -10,6 +10,27 @@ const { cancelOrderFromUpstream } = require("../services/orderCancellationServic
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 
+// Max item rows kept in the stored payload snapshot. Keeps webhook_logs docs
+// bounded for large orders while preserving enough rows to debug mismatches.
+const PAYLOAD_ITEM_CAP = 20;
+
+/**
+ * Snapshot of the inbound request body for the webhook log. Top-level fields are
+ * kept verbatim; the `items` array (if any) is capped to PAYLOAD_ITEM_CAP rows,
+ * with items_total / items_truncated recording the original size.
+ */
+function buildPayloadSnapshot(body) {
+  if (!body || typeof body !== "object") return null;
+  const { items, ...rest } = body;
+  const snapshot = { ...rest };
+  if (Array.isArray(items)) {
+    snapshot.items_total = items.length;
+    snapshot.items = items.slice(0, PAYLOAD_ITEM_CAP);
+    snapshot.items_truncated = items.length > PAYLOAD_ITEM_CAP;
+  }
+  return snapshot;
+}
+
 const toNumber = (v) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -40,11 +61,12 @@ async function log(fields) {
   }
 }
 
-async function verifyWebhookAuth(req, res, ip, event_type = "order_receive") {
+async function verifyWebhookAuth(req, res, ip, event_type = "order_receive", payload = null) {
   if (!WEBHOOK_SECRET) {
     await log({
       status: "error",
       event_type,
+      payload,
       error_message: "Webhook secret not configured on server",
       caller_ip: ip,
     });
@@ -56,6 +78,7 @@ async function verifyWebhookAuth(req, res, ip, event_type = "order_receive") {
     await log({
       status: "auth_failed",
       event_type,
+      payload,
       error_message: "Invalid or missing X-Webhook-Secret",
       caller_ip: ip,
     });
@@ -77,7 +100,8 @@ function parseOrderId(rawId) {
 exports.receiveOrder = async (req, res) => {
   const ip = callerIp(req);
   const event_type = "order_receive";
-  if (!(await verifyWebhookAuth(req, res, ip, event_type))) return;
+  const payload = buildPayloadSnapshot(req.body);
+  if (!(await verifyWebhookAuth(req, res, ip, event_type, payload))) return;
 
   const {
     project_code,
@@ -93,21 +117,21 @@ exports.receiveOrder = async (req, res) => {
   } = req.body;
 
   if (!project_code || !store_code) {
-    await log({ status: "validation_failed", event_type, error_message: "project_code and store_code are required", caller_ip: ip });
+    await log({ status: "validation_failed", event_type, payload, error_message: "project_code and store_code are required", caller_ip: ip });
     return res.status(400).json({ success: false, message: "project_code and store_code are required" });
   }
   if (!rawId) {
-    await log({ status: "validation_failed", event_type, store_code, project_code, error_message: "orders_idorders is required", caller_ip: ip });
+    await log({ status: "validation_failed", event_type, store_code, project_code, payload, error_message: "orders_idorders is required", caller_ip: ip });
     return res.status(400).json({ success: false, message: "orders_idorders is required" });
   }
   if (!Array.isArray(items) || items.length === 0) {
-    await log({ status: "validation_failed", event_type, store_code, project_code, error_message: "items array is required and must not be empty", caller_ip: ip });
+    await log({ status: "validation_failed", event_type, store_code, project_code, payload, error_message: "items array is required and must not be empty", caller_ip: ip });
     return res.status(400).json({ success: false, message: "items array is required and must not be empty" });
   }
 
   const orders_idorders = parseOrderId(rawId);
   if (!orders_idorders) {
-    await log({ status: "validation_failed", event_type, store_code, project_code, error_message: "orders_idorders must be a number", caller_ip: ip });
+    await log({ status: "validation_failed", event_type, store_code, project_code, payload, error_message: "orders_idorders must be a number", caller_ip: ip });
     return res.status(400).json({ success: false, message: "orders_idorders must be a number" });
   }
 
@@ -117,7 +141,7 @@ exports.receiveOrder = async (req, res) => {
   const projectCode = String(project_code).toUpperCase();
   const existing = await Order.findOne({ orders_idorders, project_code: projectCode }).lean();
   if (existing) {
-    await log({ status: "skipped", event_type, orders_idorders, store_code, project_code, items_count: items.length, caller_ip: ip });
+    await log({ status: "skipped", event_type, orders_idorders, store_code, project_code, items_count: items.length, payload, caller_ip: ip });
     return res.json({
       success: true,
       message: "Order already exists — skipped",
@@ -208,6 +232,7 @@ exports.receiveOrder = async (req, res) => {
       items_count: items.length,
       assigned: !!assignment,
       assign_error: assignError || null,
+      payload,
       caller_ip: ip,
     });
 
@@ -226,6 +251,7 @@ exports.receiveOrder = async (req, res) => {
       store_code: store_code ? String(store_code).toUpperCase() : null,
       project_code: project_code ? String(project_code).toUpperCase() : null,
       items_count: items?.length || 0,
+      payload,
       error_message: err.message,
       caller_ip: ip,
     });
@@ -241,13 +267,14 @@ exports.receiveOrder = async (req, res) => {
 exports.cancelOrder = async (req, res) => {
   const ip = callerIp(req);
   const event_type = "order_cancel";
-  if (!(await verifyWebhookAuth(req, res, ip, event_type))) return;
+  const payload = buildPayloadSnapshot(req.body);
+  if (!(await verifyWebhookAuth(req, res, ip, event_type, payload))) return;
 
   const { orders_idorders: rawId, project_code, reason } = req.body;
   const orders_idorders = parseOrderId(rawId);
 
   if (!orders_idorders) {
-    await log({ status: "validation_failed", event_type, error_message: "orders_idorders is required", caller_ip: ip });
+    await log({ status: "validation_failed", event_type, payload, error_message: "orders_idorders is required", caller_ip: ip });
     return res.status(400).json({ success: false, message: "orders_idorders is required" });
   }
 
@@ -264,6 +291,7 @@ exports.cancelOrder = async (req, res) => {
         status: "error",
         event_type,
         orders_idorders,
+        payload,
         error_message: result.error,
         caller_ip: ip,
         metadata: { reason: reason || null },
@@ -277,6 +305,7 @@ exports.cancelOrder = async (req, res) => {
       orders_idorders,
       store_code: result.order?.store_code || null,
       project_code: result.order?.project_code || null,
+      payload,
       caller_ip: ip,
       metadata: {
         reason: reason || null,
@@ -297,7 +326,7 @@ exports.cancelOrder = async (req, res) => {
       order: result.order,
     });
   } catch (err) {
-    await log({ status: "error", event_type, orders_idorders, error_message: err.message, caller_ip: ip });
+    await log({ status: "error", event_type, orders_idorders, payload, error_message: err.message, caller_ip: ip });
     console.error("[webhook] cancel order failed:", err.message);
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
@@ -314,7 +343,8 @@ exports.cancelOrder = async (req, res) => {
 exports.assignRider = async (req, res) => {
   const ip = callerIp(req);
   const event_type = "order_assign_rider";
-  if (!(await verifyWebhookAuth(req, res, ip, event_type))) return;
+  const payload = buildPayloadSnapshot(req.body);
+  if (!(await verifyWebhookAuth(req, res, ip, event_type, payload))) return;
 
   const {
     orders_idorders: rawId,
@@ -330,7 +360,7 @@ exports.assignRider = async (req, res) => {
 
   const orders_idorders = parseOrderId(rawId);
   if (!orders_idorders) {
-    await log({ status: "validation_failed", event_type, error_message: "orders_idorders is required", caller_ip: ip });
+    await log({ status: "validation_failed", event_type, payload, error_message: "orders_idorders is required", caller_ip: ip });
     return res.status(400).json({ success: false, message: "orders_idorders is required" });
   }
 
@@ -339,6 +369,7 @@ exports.assignRider = async (req, res) => {
       status: "validation_failed",
       event_type,
       orders_idorders,
+      payload,
       error_message: "store_code and project_code are required",
       caller_ip: ip,
     });
@@ -358,6 +389,7 @@ exports.assignRider = async (req, res) => {
         orders_idorders,
         store_code: storeCode,
         project_code: projectCode,
+        payload,
         error_message: "Order not found",
         caller_ip: ip,
       });
@@ -371,6 +403,7 @@ exports.assignRider = async (req, res) => {
         orders_idorders,
         store_code: storeCode,
         project_code: projectCode,
+        payload,
         error_message: "store_code does not match order record",
         caller_ip: ip,
         metadata: {
@@ -409,6 +442,7 @@ exports.assignRider = async (req, res) => {
         orders_idorders,
         store_code: storeCode,
         project_code: projectCode,
+        payload,
         error_message: result.error,
         caller_ip: ip,
         metadata: { use_round_robin: useRoundRobin },
@@ -423,6 +457,7 @@ exports.assignRider = async (req, res) => {
       store_code: storeCode,
       project_code: projectCode,
       assigned: true,
+      payload,
       caller_ip: ip,
       metadata: {
         use_round_robin: useRoundRobin,
@@ -453,6 +488,7 @@ exports.assignRider = async (req, res) => {
       orders_idorders,
       store_code: store_code ? String(store_code).toUpperCase() : null,
       project_code: project_code ? String(project_code).toUpperCase() : null,
+      payload,
       error_message: err.message,
       caller_ip: ip,
     });

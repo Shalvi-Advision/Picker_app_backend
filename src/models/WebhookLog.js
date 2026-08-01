@@ -24,6 +24,14 @@ const webhookLogSchema = new mongoose.Schema(
     caller_ip: { type: String, default: null },
     /** Cancel / assign-rider extras (reason, rider name, round-robin, counts, …) */
     metadata: { type: mongoose.Schema.Types.Mixed, default: null },
+    /**
+     * Snapshot of the inbound request body, for debugging payload mismatches
+     * (e.g. duplicate / missing line items). Top-level fields are kept verbatim;
+     * the items array is capped (see PAYLOAD_ITEM_CAP in the controller) so large
+     * orders don't bloat this collection. `items_total` / `items_truncated`
+     * record the original size.
+     */
+    payload: { type: mongoose.Schema.Types.Mixed, default: null },
   },
   { timestamps: true }
 );
