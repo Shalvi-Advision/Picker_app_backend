@@ -249,7 +249,17 @@ exports.getOrderItems = async (req, res) => {
     // order ids are unique per project only — scope by the requested project when supplied.
     const orderFilter = { orders_idorders: orderId };
     if (req.query.project_code) orderFilter.project_code = req.query.project_code.toUpperCase();
-    const order = await Order.findOne(orderFilter);
+    if (req.query.store_code) orderFilter.store_code = req.query.store_code.toUpperCase();
+    const matches = await Order.find(orderFilter).limit(2);
+    // Without a project_code the same order id can resolve to several projects.
+    // Refuse to guess — surface the ambiguity so the caller passes project_code.
+    if (matches.length > 1) {
+      return res.status(409).json({
+        success: false,
+        message: "Multiple orders share this id across projects — project_code is required",
+      });
+    }
+    const order = matches[0];
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
@@ -294,7 +304,17 @@ exports.getOrderDelivery = async (req, res) => {
     // order ids are unique per project only — scope by the requested project when supplied.
     const orderFilter = { orders_idorders: orderId };
     if (req.query.project_code) orderFilter.project_code = req.query.project_code.toUpperCase();
-    const order = await Order.findOne(orderFilter);
+    if (req.query.store_code) orderFilter.store_code = req.query.store_code.toUpperCase();
+    const matches = await Order.find(orderFilter).limit(2);
+    // Without a project_code the same order id can resolve to several projects.
+    // Refuse to guess — surface the ambiguity so the caller passes project_code.
+    if (matches.length > 1) {
+      return res.status(409).json({
+        success: false,
+        message: "Multiple orders share this id across projects — project_code is required",
+      });
+    }
+    const order = matches[0];
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
@@ -405,7 +425,13 @@ exports.getRiderLocations = async (req, res) => {
     for (const a of activeAssignments) {
       const key = a.rider_id.toString();
       if (!activeByRider[key]) activeByRider[key] = [];
-      activeByRider[key].push(a.orders_idorders);
+      // Include project_code/store_code so the UI can deep-link to the RIGHT
+      // order — order ids are unique per project only.
+      activeByRider[key].push({
+        orders_idorders: a.orders_idorders,
+        project_code: a.project_code,
+        store_code: a.store_code,
+      });
     }
 
     const result = riders

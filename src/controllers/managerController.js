@@ -284,9 +284,12 @@ exports.getOrderItems = async (req, res) => {
     const rawLimit = parseInt(req.query.limit);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(200, rawLimit) : 0;
 
-    // No project_code in the request; scope the order lookup by the manager's
-    // stores. order ids are unique per project only.
-    const order = await Order.findOne({ orders_idorders: orderId, store_code: { $in: req.user.store_codes } });
+    // Scope the order lookup by the manager's stores. order ids are unique per
+    // project only, so prefer an explicit project_code when the caller supplies
+    // one; otherwise fall back to the manager's store scope.
+    const orderFilter = { orders_idorders: orderId, store_code: { $in: req.user.store_codes } };
+    if (req.query.project_code) orderFilter.project_code = req.query.project_code.toUpperCase();
+    const order = await Order.findOne(orderFilter);
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
 
     // Once the order is known, its project_code is the reliable scope for items.
@@ -453,7 +456,13 @@ exports.getRiderLocations = async (req, res) => {
     for (const a of activeAssignments) {
       const key = a.rider_id.toString();
       if (!activeByRider[key]) activeByRider[key] = [];
-      activeByRider[key].push(a.orders_idorders);
+      // Include project_code/store_code so the UI can deep-link to the RIGHT
+      // order — order ids are unique per project only.
+      activeByRider[key].push({
+        orders_idorders: a.orders_idorders,
+        project_code: a.project_code,
+        store_code: a.store_code,
+      });
     }
 
     const result = riders

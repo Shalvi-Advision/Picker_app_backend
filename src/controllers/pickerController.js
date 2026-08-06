@@ -65,7 +65,9 @@ exports.getOrderItems = async (req, res) => {
       return res.status(404).json({ success: false, message: "Assignment not found" });
     }
 
-    const filter = { orders_idorders: Number(orders_idorders) };
+    // order ids are unique per project only — scope items to the assignment's
+    // project so a same-id order in another project doesn't bleed into this list.
+    const filter = { orders_idorders: Number(orders_idorders), project_code: assignment.project_code };
     const total = await OrderItem.countDocuments(filter);
 
     let query = OrderItem.find(filter);
