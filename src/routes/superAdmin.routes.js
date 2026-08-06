@@ -12,6 +12,7 @@ const {
   markNotificationRead,
   getAllOrders,
   getOrderDelivery,
+  deleteOrder,
   listDeliveries,
   getRiderLocations,
   listRiders,
@@ -69,6 +70,9 @@ router.patch("/notifications/:id/read", sharedGuard, markNotificationRead);
 const ownerOnly = roleGuard("super_admin");
 router.get("/all-orders", requireCapability("can_access_orders"), getAllOrders);
 router.get("/orders/:orders_idorders/delivery", requireCapability("can_access_orders"), getOrderDelivery);
+// Hard-delete an order + all derived records. super_admin only; project_admin
+// scope is additionally enforced in the controller. project_code required.
+router.delete("/orders/:orders_idorders", ownerOnly, deleteOrder);
 router.get("/deliveries", requireCapability("can_access_deliveries"), listDeliveries);
 router.get("/riders/locations", requireCapability("can_access_deliveries"), getRiderLocations);
 router.get("/riders", requireCapability("can_access_riders"), listRiders);

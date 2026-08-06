@@ -10,6 +10,7 @@ const PickerUser = require("../models/PickerUser");
 const WebhookLog = require("../models/WebhookLog");
 const ProjectStore = require("../models/ProjectStore");
 const { replaceOrders, PROJECT_CODE } = require("../services/orderSyncService");
+const { deleteOrderCompletely } = require("../services/orderDeletionService");
 const {
   CAPABILITY_KEYS,
   PROJECT_ADMIN_PAGE_CAPS,
@@ -346,6 +347,42 @@ exports.getOrderDelivery = async (req, res) => {
         delivery_route: route,
         otp_enabled: process.env.DELIVERY_OTP_ENABLED === "true",
       },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * DELETE /super-admin/orders/:orders_idorders
+ * Hard-delete an order and every record derived from it. project_code is
+ * REQUIRED (body or query) — order ids are unique per project only, so deleting
+ * by id alone could wipe the wrong project's order.
+ */
+exports.deleteOrder = async (req, res) => {
+  try {
+    const orderId = Number(req.params.orders_idorders);
+    const projectCode = (req.body?.project_code || req.query.project_code || "").toUpperCase();
+    if (!projectCode) {
+      return res.status(400).json({ success: false, message: "project_code is required to delete an order" });
+    }
+
+    // project_admin may only delete orders inside their own project.
+    const scope = callerProjectScope(req);
+    if (scope && projectCode !== scope) {
+      return res.status(403).json({ success: false, message: "Cannot delete an order outside your project" });
+    }
+
+    const result = await deleteOrderCompletely({ orders_idorders: orderId, project_code: projectCode });
+    if (result.error) {
+      return res.status(result.status || 400).json({ success: false, message: result.error });
+    }
+
+    return res.json({
+      success: true,
+      message: `Order #${orderId} (${result.order.project_code}) deleted`,
+      order: result.order,
+      deleted: result.deleted,
     });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
