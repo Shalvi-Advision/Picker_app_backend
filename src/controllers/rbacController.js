@@ -2,7 +2,7 @@ const RolePermission = require("../models/RolePermission");
 const { getRoleCapabilities } = require("../services/capabilityService");
 const { CAPABILITIES, CAPABILITY_KEYS } = require("../constants/capabilities");
 
-const EDITABLE_ROLES = ["picker", "manager", "admin"];
+const EDITABLE_ROLES = ["picker", "manager", "admin", "rider"];
 
 // GET /super-admin/capabilities
 // Returns the catalog plus the current effective per-role maps (defaults merged
