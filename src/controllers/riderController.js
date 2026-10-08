@@ -182,10 +182,17 @@ exports.startDelivery = async (req, res) => {
     }
 
     // order ids are unique per project only — scope by the assignment's project.
-    await Order.updateOne(
+    const outForDeliveryOrder = await Order.findOneAndUpdate(
       { orders_idorders: assignment.orders_idorders, project_code: assignment.project_code },
-      { delivery_status: "out_for_delivery" }
+      { delivery_status: "out_for_delivery" },
+      { new: true }
     );
+
+    if (outForDeliveryOrder) {
+      require("../services/upstreamStatusService")
+        .notifyUpstream(outForDeliveryOrder, "out_for_delivery")
+        .catch((e) => console.error("[startDelivery] notifyUpstream failed:", e.message));
+    }
 
     await onAssignmentStarted(assignment);
 
@@ -280,19 +287,29 @@ exports.completeDelivery = async (req, res) => {
     }
 
     // order ids are unique per project only — scope by the assignment's project.
-    await Order.updateOne(
+    const deliveredOrder = await Order.findOneAndUpdate(
       { orders_idorders: assignment.orders_idorders, project_code: assignment.project_code },
       {
         delivery_status: "delivered",
         upstream_sync: { status: "pending", attempts: 0, last_error: null, synced_at: null },
-      }
+      },
+      { new: true }
     );
 
     await onAssignmentFinished(assignment, "delivered");
     // Immediate push; the background worker retries if this attempt fails.
+    // (No-ops for orders with their own upstream_webhook_url — see the
+    // hasUpstreamWebhook guard in upstreamDeliveryService.js.)
     syncDeliveredOrder(assignment.orders_idorders).catch((e) =>
       console.error("syncDeliveredOrder failed:", e.message)
     );
+    if (deliveredOrder) {
+      require("../services/upstreamStatusService")
+        .notifyUpstream(deliveredOrder, "delivered", {
+          proof_of_delivery: assignment.proof_of_delivery,
+        })
+        .catch((e) => console.error("[completeDelivery] notifyUpstream failed:", e.message));
+    }
 
     notifyManagersOfDeliveryEvent(assignment, "completed", req.user).catch((e) =>
       console.error("notifyManagersOfDeliveryEvent failed:", e.message)
@@ -327,10 +344,17 @@ exports.failDelivery = async (req, res) => {
     }
 
     // order ids are unique per project only — scope by the assignment's project.
-    await Order.updateOne(
+    const failedOrder = await Order.findOneAndUpdate(
       { orders_idorders: assignment.orders_idorders, project_code: assignment.project_code },
-      { delivery_status: "failed" }
+      { delivery_status: "failed" },
+      { new: true }
     );
+
+    if (failedOrder) {
+      require("../services/upstreamStatusService")
+        .notifyUpstream(failedOrder, "delivery_failed", { reason: String(reason).trim() })
+        .catch((e) => console.error("[failDelivery] notifyUpstream failed:", e.message));
+    }
 
     await onAssignmentFinished(assignment, "failed");
 

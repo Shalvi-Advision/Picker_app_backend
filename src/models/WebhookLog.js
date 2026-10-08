@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-const EVENT_TYPES = ["order_receive", "order_cancel", "order_assign_rider", "rider_delivered"];
+const EVENT_TYPES = ["order_receive", "order_cancel", "order_assign_rider", "rider_delivered", "upstream_status"];
 
 const webhookLogSchema = new mongoose.Schema(
   {

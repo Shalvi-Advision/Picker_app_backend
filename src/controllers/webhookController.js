@@ -114,6 +114,13 @@ exports.receiveOrder = async (req, res) => {
     latitude,
     longitude,
     items,
+    // Optional: lets the caller register where status updates for this
+    // (project, store) should be POSTed back to — see ProjectStore.js.
+    // Absent for callers (like the legacy Patel integration) that don't
+    // support receiving them; upstreamStatusService falls back to the
+    // global RIDER_DELIVERED_API_URL in that case.
+    upstream_webhook_url,
+    upstream_webhook_secret,
   } = req.body;
 
   if (!project_code || !store_code) {
@@ -208,9 +215,24 @@ exports.receiveOrder = async (req, res) => {
       total_amount: Math.round(totalAmount * 100) / 100,
     }).catch((e) => console.error("[webhook] notifyManagersOfNewOrder failed:", e.message));
 
+    // $set (not just $setOnInsert) for the upstream webhook fields so a
+    // caller can rotate its URL/secret just by continuing to send them on
+    // later orders — no separate admin step needed. Only set when present,
+    // so a caller that never sends them (legacy Patel/RET3163) never has
+    // these fields touched, and upstreamStatusService's env-var fallback
+    // keeps applying.
+    const projectStoreUpdate = {
+      $setOnInsert: { project_code: String(project_code).toUpperCase(), store_code: String(store_code).toUpperCase() },
+    };
+    if (upstream_webhook_url || upstream_webhook_secret) {
+      projectStoreUpdate.$set = {
+        ...(upstream_webhook_url ? { upstream_webhook_url } : {}),
+        ...(upstream_webhook_secret ? { upstream_webhook_secret } : {}),
+      };
+    }
     await ProjectStore.updateOne(
       { project_code: String(project_code).toUpperCase(), store_code: String(store_code).toUpperCase() },
-      { $setOnInsert: { project_code: String(project_code).toUpperCase(), store_code: String(store_code).toUpperCase() } },
+      projectStoreUpdate,
       { upsert: true }
     );
 

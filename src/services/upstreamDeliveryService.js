@@ -1,5 +1,6 @@
 const Order = require("../models/Order");
 const WebhookLog = require("../models/WebhookLog");
+const { hasUpstreamWebhook } = require("./upstreamStatusService");
 
 /**
  * Syncs delivered orders to the upstream e-commerce system
@@ -76,6 +77,19 @@ async function syncDeliveredOrder(ordersIdorders) {
   const sync = order.upstream_sync || {};
   if (sync.status === "synced") return { ok: true, already: true };
   if ((sync.attempts || 0) >= MAX_ATTEMPTS) return { ok: false, exhausted: true };
+
+  // Orders from a caller that registered its own per-tenant webhook
+  // (upstreamStatusService) already get their "delivered" notification
+  // through that path — posting them here too would leak their data to
+  // the legacy global RIDER_DELIVERED_API_URL, which belongs to a
+  // different upstream entirely.
+  if (await hasUpstreamWebhook(order)) {
+    await Order.updateOne(
+      { orders_idorders: ordersIdorders },
+      { $set: { "upstream_sync.status": "synced", "upstream_sync.synced_at": new Date() } }
+    );
+    return { ok: true, skipped: true, reason: "handled_by_upstream_status_service" };
+  }
 
   try {
     await postRiderDelivered(order);

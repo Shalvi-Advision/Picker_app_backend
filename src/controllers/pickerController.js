@@ -110,10 +110,19 @@ exports.startPicking = async (req, res) => {
     }
 
     // Scope by the assignment's project — order ids are unique per project only.
-    await Order.updateOne(
+    const updatedOrder = await Order.findOneAndUpdate(
       { orders_idorders: Number(orders_idorders), project_code: assignment.project_code },
-      { status: "in_progress" }
+      { status: "in_progress" },
+      { new: true }
     );
+
+    // Fire-and-forget: tell the upstream system (if it registered a
+    // webhook) that picking has started. No-ops for callers that didn't.
+    if (updatedOrder) {
+      require("../services/upstreamStatusService")
+        .notifyUpstream(updatedOrder, "picking_started")
+        .catch((e) => console.error("[startPicking] notifyUpstream failed:", e.message));
+    }
 
     res.json({ success: true, data: assignment });
   } catch (err) {
