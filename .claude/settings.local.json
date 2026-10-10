@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:picker.shalviadvision.com)",
+      "Bash(curl -sS -w \"\\\\n---HTTP_STATUS:%{http_code}---\\\\n\" -X POST \"https://picker.shalviadvision.com/api/get_project_pending_orders\" -H \"Content-Type: application/json\" -d '{\"project_code\":\"RET3163\"}')",
+      "Bash(node -e ' *)",
+      "Bash(node --check src/controllers/superAdminController.js)",
+      "Bash(node --check src/routes/superAdmin.routes.js)",
+      "Bash(node --check src/index.js)",
+      "Bash(node --check src/services/orderSyncService.js)",
+      "Bash(node --check src/controllers/managerController.js)"
+    ]
+  }
+}

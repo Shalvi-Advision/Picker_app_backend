@@ -11,7 +11,9 @@ async function findRiderForStore({ rider_id, rider_email, storeCode, projectCode
   else if (rider_email) filter.email = String(rider_email).toLowerCase().trim();
   else return null;
 
-  if (projectCode) filter.project_code = String(projectCode).toUpperCase();
+  // Riders created without a project carry project_code "" — they are still
+  // eligible for any order in one of their stores.
+  if (projectCode) filter.project_code = { $in: [String(projectCode).toUpperCase(), ""] };
 
   const rider = await PickerUser.findOne(filter);
   if (!rider) return null;

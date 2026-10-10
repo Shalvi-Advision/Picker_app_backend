@@ -402,10 +402,21 @@ async function notifySuperAdminsOfOrder(order, manager) {
 
 exports.getRiders = async (req, res) => {
   try {
-    const riders = await PickerUser.find({
+    const filter = {
       role: "rider",
       store_codes: { $in: req.user.store_codes },
-    })
+    };
+    // ?store_code=X → only riders that can actually be assigned an order of
+    // store X (active, in that store), matching findRiderForStore.
+    const storeCode = req.query.store_code && String(req.query.store_code).toUpperCase();
+    if (storeCode) {
+      if (!req.user.store_codes.includes(storeCode)) {
+        return res.json({ success: true, data: [] });
+      }
+      filter.store_codes = storeCode;
+      filter.is_active = true;
+    }
+    const riders = await PickerUser.find(filter)
       .select("-password")
       .sort({ is_active: -1, rider_availability: 1, name: 1 });
 
@@ -545,6 +556,7 @@ exports.assignRider = async (req, res) => {
 
     const result = await assignRiderToOrder({
       orders_idorders: orderId,
+      project_code: order.project_code,
       rider_id: req.body.rider_id,
       assigned_by: req.user._id,
     });
