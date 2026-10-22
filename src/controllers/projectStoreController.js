@@ -40,7 +40,7 @@ exports.listProjectStores = async (req, res) => {
     // Attach user counts per (project_code, store_code) in one query
     const storeCodes = rows.map((r) => r.store_code);
     const users = await PickerUser.find(
-      { store_codes: { $in: storeCodes }, role: { $in: ["picker", "manager"] } },
+      { store_codes: { $in: storeCodes }, role: { $in: ["picker", "manager", "rider"] } },
       { name: 1, role: 1, store_codes: 1, project_code: 1, is_active: 1 }
     ).lean();
 
@@ -149,7 +149,7 @@ exports.getStoreUsers = async (req, res) => {
     const users = await PickerUser.find({
       project_code: project_code.toUpperCase(),
       store_codes:  store_code.toUpperCase(),
-      role: { $in: ["picker", "manager"] },
+      role: { $in: ["picker", "manager", "rider"] },
     })
       .select("-password")
       .sort({ role: 1, name: 1 })
