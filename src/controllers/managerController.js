@@ -406,6 +406,12 @@ exports.getRiders = async (req, res) => {
       role: "rider",
       store_codes: { $in: req.user.store_codes },
     };
+    // Project > store hierarchy: store codes can repeat across projects, so
+    // only the manager's own project's riders (plus project-less ones, which
+    // findRiderForStore still accepts).
+    if (req.user.project_code) {
+      filter.project_code = { $in: [req.user.project_code, ""] };
+    }
     // ?store_code=X → only riders that can actually be assigned an order of
     // store X (active, in that store), matching findRiderForStore.
     const storeCode = req.query.store_code && String(req.query.store_code).toUpperCase();
