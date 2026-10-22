@@ -188,11 +188,40 @@ exports.completeOrder = async (req, res) => {
       console.error("notifyManagersOfCompletedOrder failed:", e.message)
     );
 
+    // Fire-and-forget: hand the picked order straight to the next online rider
+    // (round-robin by store + project). If no rider is online it stays
+    // ready_for_delivery and a manager assigns one by hand.
+    autoAssignRider(Number(orders_idorders), assignment).catch((e) =>
+      console.error("[completeOrder] autoAssignRider failed:", e.message)
+    );
+
     res.json({ success: true, message: "Order completed", data: assignment });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
+async function autoAssignRider(ordersIdorders, assignment) {
+  const { assignRiderToOrder } = require("../services/deliveryAssignmentService");
+  const result = await assignRiderToOrder({
+    orders_idorders: ordersIdorders,
+    store_code: assignment.store_code,
+    project_code: assignment.project_code,
+    use_round_robin: true,
+  });
+
+  if (result.error) {
+    console.warn(`[completeOrder] order #${ordersIdorders} not auto-assigned: ${result.error}`);
+    return;
+  }
+
+  // Timeline entry only — upstream keeps the order's status unchanged.
+  require("../services/upstreamStatusService")
+    .notifyUpstream(result.order, "rider_assigned", {
+      rider: { id: String(result.rider._id), name: result.rider.name, phone: result.rider.phone || null },
+    })
+    .catch((e) => console.error("[completeOrder] notifyUpstream failed:", e.message));
+}
 
 async function notifyManagersOfCompletedOrder(ordersIdorders, projectCode, picker) {
   const { sendToUser } = require("../services/notificationService");

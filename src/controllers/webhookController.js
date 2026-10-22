@@ -3,6 +3,10 @@ const Order = require("../models/Order");
 const OrderItem = require("../models/OrderItem");
 const WebhookLog = require("../models/WebhookLog");
 const ProjectStore = require("../models/ProjectStore");
+const PickerAssignment = require("../models/PickerAssignment");
+const DeliveryAssignment = require("../models/DeliveryAssignment");
+const { sendToUser } = require("../services/notificationService");
+const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 const { assignOrder } = require("../services/roundRobinService");
 const { notifyManagersOfNewOrder } = require("../services/notificationService");
 const { assignRiderToOrder } = require("../services/deliveryAssignmentService");
@@ -354,6 +358,30 @@ exports.cancelOrder = async (req, res) => {
   }
 };
 
+/** Cancel the order's active picker assignments and tell those pickers. */
+async function withdrawFromPicker(order, reason) {
+  const filter = {
+    orders_idorders: order.orders_idorders,
+    project_code: order.project_code,
+    status: { $in: ["assigned", "in_progress"] },
+  };
+  const active = await PickerAssignment.find(filter).select("assigned_to").lean();
+  if (active.length === 0) return;
+
+  await PickerAssignment.updateMany(filter, { status: "cancelled", rejected_reason: reason });
+
+  const pickerIds = [...new Set(active.map((a) => String(a.assigned_to)))];
+  pickerIds.forEach((id) =>
+    sendToUser(
+      id,
+      "Order removed",
+      `Order #${order.orders_idorders} (${order.store_code}) was accepted by admin — no picking needed.`,
+      { orders_idorders: String(order.orders_idorders), store_code: order.store_code },
+      NOTIFICATION_TYPES.INFO
+    ).catch(() => {})
+  );
+}
+
 /**
  * POST /api/webhook/order/assign-rider
  * Upstream admin accepted the order — round-robin assign to a rider for that order's store + project.
@@ -443,6 +471,44 @@ exports.assignRider = async (req, res) => {
       prepare_order !== false && (!existing || existing.status !== "completed");
 
     const useRoundRobin = !rider_id && !rider_email;
+
+    // Without replace_active, an order that already has a rider (e.g. it was
+    // picked and auto-assigned before the admin accepted) is left alone.
+    if (replace_active === false) {
+      const activeDelivery = await DeliveryAssignment.findOne({
+        orders_idorders,
+        project_code: projectCode,
+        status: { $in: ["assigned", "out_for_delivery"] },
+      }).populate("rider_id", "name email phone rider_availability");
+      if (activeDelivery) {
+        await log({
+          status: "success",
+          event_type,
+          orders_idorders,
+          store_code: storeCode,
+          project_code: projectCode,
+          assigned: true,
+          payload,
+          caller_ip: ip,
+          metadata: { already_assigned: true },
+        });
+        return res.status(200).json({
+          success: true,
+          orders_idorders,
+          store_code: storeCode,
+          project_code: projectCode,
+          rider_assigned: true,
+          already_assigned: true,
+          data: { assignment: activeDelivery, rider: activeDelivery.rider_id },
+        });
+      }
+    }
+
+    // Accepted before picking finished — skip picking: pull the order out of
+    // the picker's queue before it goes to a rider.
+    if (shouldPrepare) {
+      await withdrawFromPicker(existing, "Accepted by admin — sent directly to delivery");
+    }
 
     const result = await assignRiderToOrder({
       orders_idorders,
