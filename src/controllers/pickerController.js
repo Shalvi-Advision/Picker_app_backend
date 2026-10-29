@@ -178,15 +178,25 @@ exports.completeOrder = async (req, res) => {
       return res.status(404).json({ success: false, message: "No in-progress assignment found" });
     }
 
-    await Order.updateOne(
+    const updatedOrder = await Order.findOneAndUpdate(
       { orders_idorders: Number(orders_idorders), project_code: assignment.project_code },
-      { status: "completed", delivery_status: "ready_for_delivery" }
+      { status: "completed", delivery_status: "ready_for_delivery" },
+      { new: true }
     );
 
     // Fire-and-forget: notify managers of the store that the order is complete.
     notifyManagersOfCompletedOrder(Number(orders_idorders), assignment.project_code, req.user).catch((e) =>
       console.error("notifyManagersOfCompletedOrder failed:", e.message)
     );
+
+    // Fire-and-forget: tell upstream what was actually picked, per item —
+    // same data getOrderItems already returns to the picker's own app, just
+    // pushed instead of pulled. No-op for callers with no upstream webhook.
+    if (updatedOrder) {
+      notifyPickingCompleted(assignment, updatedOrder).catch((e) =>
+        console.error("[completeOrder] notifyPickingCompleted failed:", e.message)
+      );
+    }
 
     // Fire-and-forget: hand the picked order straight to the next online rider
     // (round-robin by store + project). If no rider is online it stays
@@ -200,6 +210,24 @@ exports.completeOrder = async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
+// Bundles this assignment's per-item pick results into one upstream event —
+// same PickerItemStatus rows getOrderItems (above) already returns to the
+// picker's own app, just pushed here instead of pulled there.
+async function notifyPickingCompleted(assignment, order) {
+  const itemStatuses = await PickerItemStatus.find({ assignment_id: assignment._id });
+  if (!itemStatuses.length) return;
+
+  const items = itemStatuses.map((s) => ({
+    p_code: s.p_code,
+    picked_status: s.picked_status,
+    picked_quantity: s.picked_quantity,
+    remark: s.remark || null,
+    photo_url: s.photo_url || null,
+  }));
+
+  await require("../services/upstreamStatusService").notifyUpstream(order, "picking_completed", { items });
+}
 
 async function autoAssignRider(ordersIdorders, assignment) {
   const { assignRiderToOrder } = require("../services/deliveryAssignmentService");
