@@ -226,7 +226,16 @@ async function notifyPickingCompleted(assignment, order) {
     photo_url: s.photo_url || null,
   }));
 
-  await require("../services/upstreamStatusService").notifyUpstream(order, "picking_completed", { items });
+  const pickerUser = await PickerUser.findById(assignment.assigned_to).select("name phone");
+
+  await require("../services/upstreamStatusService").notifyUpstream(order, "picking_completed", {
+    items,
+    picker: pickerUser
+      ? { id: String(assignment.assigned_to), name: pickerUser.name, phone: pickerUser.phone || null }
+      : null,
+    picking_assigned_at: assignment.assigned_at,
+    picking_completed_at: assignment.completed_at,
+  });
 }
 
 async function autoAssignRider(ordersIdorders, assignment) {
